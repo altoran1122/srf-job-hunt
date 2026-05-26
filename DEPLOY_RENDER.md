@@ -22,7 +22,7 @@ srf-job-hunt
 4. Render should detect `render.yaml`.
 5. Fill required environment variables:
    - `SRF_PASSWORD`: the shared SRF login password.
-   - `SARAMIN_ACCESS_KEY`: optional. Add it later if Saramin has not approved the API yet.
+6. Do not add `SARAMIN_ACCESS_KEY` during the first deployment if Saramin has not approved the API yet. Add it later inside the SRF Jobs settings screen.
 
 ## 3. Public URL
 
