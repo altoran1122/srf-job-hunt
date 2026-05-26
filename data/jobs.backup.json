@@ -184,11 +184,10 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:28+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "신입"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-6a0fb4ebba27fe5e15325566",
@@ -214,13 +213,12 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:28+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "리서치",
       "외국계",
       "신입"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-6a0e92a554d45962c956cacb",
@@ -246,11 +244,10 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:28+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "신입"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-6a0d23e56ebba30c561b896f",
@@ -308,15 +305,14 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:28+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "IB",
       "리서치",
       "핀테크",
       "외국계",
       "인턴"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-6a068b6a49d7420d40168436",
@@ -342,7 +338,7 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:28+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "IB",
       "자산운용",
@@ -350,8 +346,7 @@
       "WM",
       "외국계",
       "인턴"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-69e88ce654d45962c94b741a",
@@ -377,12 +372,11 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:28+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "외국계",
       "신입"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-69c3bbc249d7420d4002cc6d",
@@ -408,12 +402,11 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:28+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "외국계",
       "신입"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-698c494489aeff33eb071455",
@@ -439,11 +432,10 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:28+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "신입"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-688b0b06ff11d511d0642c23",
@@ -469,12 +461,11 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:28+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "리서치",
       "신입"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-6433ff4b8b129f04784919b3",
@@ -530,14 +521,13 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:30+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "리서치",
       "리스크",
       "외국계",
       "신입"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-6a056a4149d7420d40162d67",
@@ -563,13 +553,12 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:30+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "리서치",
       "외국계",
       "인턴"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-6a02da7849d7420d40155bfa",
@@ -595,12 +584,11 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:30+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "리스크",
       "신입"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-699d5f956cf0d12a1e1e424d",
@@ -626,13 +614,12 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:30+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "리서치",
       "백오피스",
       "인턴"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-6892db880ee608273b5352b2",
@@ -658,14 +645,13 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:30+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "리서치",
       "퀀트",
       "리스크",
       "신입"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-6731a1d38b129f047099beb3",
@@ -691,13 +677,12 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:30+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "리서치",
       "외국계",
       "인턴"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-6a06e22f54d45962c9544d9e",
@@ -723,11 +708,10 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:30+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "신입"
-    ],
-    "is_sample": false
+    ]
   },
   {
     "id": "superookie-69e1c85049d7420d400bf2e6",
@@ -753,10 +737,9 @@
     "hidden": false,
     "note": "",
     "created_at": "2026-05-27T01:52:30+09:00",
-    "updated_at": "2026-05-27T01:52:34+09:00",
+    "updated_at": "2026-05-27T01:52:30+09:00",
     "tags": [
       "신입"
-    ],
-    "is_sample": false
+    ]
   }
 ]
