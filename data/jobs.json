@@ -1,0 +1,163 @@
+[
+  {
+    "id": "sample-kofia-asset-ops-intern",
+    "title": "[샘플] 자산운용 운용지원 인턴",
+    "company": "SRF 샘플운용",
+    "source": "Sample",
+    "source_url": "https://kofia.or.kr/brd/m_96/list.do",
+    "apply_url": "https://kofia.or.kr/brd/m_96/list.do",
+    "level": "intern",
+    "employment_type": "인턴",
+    "location": "서울",
+    "deadline": "2026-06-14",
+    "published_at": "2026-05-21",
+    "tags": [
+      "자산운용",
+      "운용지원",
+      "인턴"
+    ],
+    "summary": {
+      "work": "펀드 운용 자료 정리, 운용보고서 보조, 시장 데이터 취합 업무 중심.",
+      "requirements": "금융시장 기초 이해, Excel 활용, 꼼꼼한 문서 정리 역량 필요.",
+      "advantages": "투자자산운용사, Python 또는 SQL 경험, 금융 동아리 리서치 경험 우대.",
+      "fit": "자산운용 프론트와 미들 업무를 가까이서 보고 싶은 SRF 멤버에게 적합.",
+      "notice": "샘플 데이터입니다. 실제 지원 전 원문 공고에서 제출서류와 마감 시간을 확인하세요."
+    },
+    "status": "new",
+    "featured": true,
+    "hidden": false,
+    "note": "",
+    "created_at": "2026-05-26T00:00:00+09:00",
+    "updated_at": "2026-05-26T00:00:00+09:00",
+    "is_sample": true
+  },
+  {
+    "id": "sample-global-ib-entry",
+    "title": "[샘플] 외국계 증권사 Investment Banking Analyst 신입",
+    "company": "SRF Global Securities",
+    "source": "Sample",
+    "source_url": "https://www.superookie.com/jobs",
+    "apply_url": "https://www.superookie.com/jobs",
+    "level": "entry",
+    "employment_type": "신입",
+    "location": "서울",
+    "deadline": "2026-06-07",
+    "published_at": "2026-05-20",
+    "tags": [
+      "외국계",
+      "IB",
+      "리서치",
+      "신입"
+    ],
+    "summary": {
+      "work": "M&A 및 ECM/DCM 피치북 작성, 산업 리서치, 거래 자료 업데이트 보조.",
+      "requirements": "재무제표 이해, 영어 커뮤니케이션, PowerPoint와 Excel 모델링 기초 필요.",
+      "advantages": "IB 인턴, 밸류에이션 프로젝트, CFA/FRM 준비 경험 우대.",
+      "fit": "외국계 IB 진입을 목표로 하고 딜 자료 작성에 강한 멤버에게 추천.",
+      "notice": "샘플 데이터입니다. 실제 지원 링크에서는 영문 이력서 요구 여부를 확인하세요."
+    },
+    "status": "watching",
+    "featured": false,
+    "hidden": false,
+    "note": "영문 CV 템플릿 공유하면 좋음.",
+    "created_at": "2026-05-26T00:00:00+09:00",
+    "updated_at": "2026-05-27T00:13:54+09:00",
+    "is_sample": true
+  },
+  {
+    "id": "sample-fintech-risk-intern",
+    "title": "[샘플] 핀테크 리스크 데이터 인턴",
+    "company": "SRF Fintech Lab",
+    "source": "Sample",
+    "source_url": "https://oapi.saramin.co.kr/guide/info",
+    "apply_url": "https://oapi.saramin.co.kr/guide/info",
+    "level": "intern",
+    "employment_type": "인턴",
+    "location": "서울/원격",
+    "deadline": "2026-06-21",
+    "published_at": "2026-05-23",
+    "tags": [
+      "핀테크",
+      "리스크",
+      "데이터",
+      "인턴"
+    ],
+    "summary": {
+      "work": "대출 포트폴리오 데이터 정리, 리스크 지표 모니터링, 대시보드 업데이트.",
+      "requirements": "통계 기초, SQL 또는 Python 중 하나, 숫자 검증에 강한 태도 필요.",
+      "advantages": "신용평가모형, 카드/대출 데이터 분석, Tableau 또는 Power BI 경험 우대.",
+      "fit": "금융 데이터 분석과 리스크 관리 쪽 커리어를 탐색하는 멤버에게 적합.",
+      "notice": "샘플 데이터입니다. 실제 공고의 개인정보 제공 범위와 근무 조건을 확인하세요."
+    },
+    "status": "new",
+    "featured": false,
+    "hidden": false,
+    "note": "",
+    "created_at": "2026-05-26T00:00:00+09:00",
+    "updated_at": "2026-05-26T00:00:00+09:00",
+    "is_sample": true
+  },
+  {
+    "id": "sample-research-assistant",
+    "title": "[샘플] 증권 리서치 RA 채용전환형 인턴",
+    "company": "SRF Securities Research",
+    "source": "Sample",
+    "source_url": "https://kofia.or.kr/brd/m_96/list.do",
+    "apply_url": "https://kofia.or.kr/brd/m_96/list.do",
+    "level": "intern",
+    "employment_type": "채용전환형 인턴",
+    "location": "서울 여의도",
+    "deadline": "2026-05-31",
+    "published_at": "2026-05-18",
+    "tags": [
+      "리서치",
+      "증권",
+      "RA",
+      "인턴"
+    ],
+    "summary": {
+      "work": "기업 실적 업데이트, 산업 뉴스 모니터링, 애널리스트 발간 자료 보조.",
+      "requirements": "회계 기초, 빠른 자료 검색, 숫자와 문장의 일관성 검수 역량 필요.",
+      "advantages": "밸류에이션 스터디, 산업 리포트 작성, Bloomberg/Quantiwise 경험 우대.",
+      "fit": "리서치 RA 또는 애널리스트 커리어를 진지하게 탐색하는 멤버에게 추천.",
+      "notice": "샘플 데이터입니다. 마감 임박 공고는 원문에서 접수 마감 시각을 확인하세요."
+    },
+    "status": "new",
+    "featured": true,
+    "hidden": false,
+    "note": "",
+    "created_at": "2026-05-26T00:00:00+09:00",
+    "updated_at": "2026-05-26T00:00:00+09:00",
+    "is_sample": true
+  },
+  {
+    "id": "kofia-40052",
+    "title": "[케이알투자증권] 채권부문 전략금융본부 인턴 모집",
+    "company": "KR투자증권",
+    "source": "KOFIA",
+    "source_url": "https://kofia.or.kr/brd/m_96/view.do?seq=40052&srchFr=&srchTo=&srchWord=&srchTp=&multi_itm_seq=0&itm_seq_1=0&itm_seq_2=0&company_cd=&company_nm=",
+    "apply_url": "https://kofia.or.kr/brd/m_96/view.do?seq=40052&srchFr=&srchTo=&srchWord=&srchTp=&multi_itm_seq=0&itm_seq_1=0&itm_seq_2=0&company_cd=&company_nm=",
+    "level": "intern",
+    "employment_type": "인턴",
+    "location": "확인 필요",
+    "deadline": "",
+    "published_at": "2026-05-26",
+    "tags": [
+      "인턴"
+    ],
+    "summary": {
+      "work": "KR투자증권의 [케이알투자증권] 채권부문 전략금융본부 인턴 모집 공고입니다. 인턴 관련 업무 가능성이 높습니다.",
+      "requirements": "인턴급 공고로 분류했습니다. 세부 지원자격과 제출서류는 KOFIA 원문에서 확인하세요.",
+      "advantages": "금융시장 이해, 데이터 정리, 영어 또는 Excel 역량이 있으면 우대 포인트가 될 수 있습니다.",
+      "fit": "인턴 커리어를 탐색하는 SRF 멤버에게 우선 검토할 만한 공고입니다.",
+      "notice": "자동 요약입니다. 마감일은 원문 확인이 필요합니다. 지원 전 원문 공고를 확인하세요."
+    },
+    "status": "new",
+    "featured": false,
+    "hidden": false,
+    "note": "",
+    "created_at": "2026-05-27T00:04:20+09:00",
+    "updated_at": "2026-05-27T01:05:37+09:00",
+    "is_sample": false
+  }
+]

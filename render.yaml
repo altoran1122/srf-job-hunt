@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: srf-job-hunt
+    runtime: python
+    buildCommand: python --version
+    startCommand: python server.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: SRF_DATA_DIR
+        value: /opt/render/project/src/runtime-data
+      - key: SRF_PASSWORD
+        sync: false
+      - key: SARAMIN_ACCESS_KEY
+        sync: false
+    # For real SRF use, add a persistent disk in the Render dashboard:
+    # mountPath: /opt/render/project/src/runtime-data
