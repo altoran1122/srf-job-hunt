@@ -36,6 +36,7 @@ FINANCE_KEYWORDS = (
 
 ENTRY_KEYWORDS = ("신입", "주니어", "채용전환", "trainee", "analyst", "entry")
 INTERN_KEYWORDS = ("인턴", "intern", "internship")
+NON_TARGET_LEVEL_KEYWORDS = ("주니어경력", "junior career")
 EXCLUDE_KEYWORDS = (
     "경력직",
     "경력",
@@ -54,17 +55,109 @@ EXCLUDE_KEYWORDS = (
     "3년",
 )
 
-TAG_RULES = {
-    "IB": ("ib", "investment banking", "m&a", "ecm", "dcm", "기업금융", "인수금융"),
-    "자산운용": ("자산운용", "운용", "펀드", "portfolio", "asset management"),
-    "리서치": ("리서치", "research", "ra", "애널리스트", "분석"),
-    "퀀트": ("퀀트", "quant", "파생", "derivative", "알고리즘"),
-    "리스크": ("리스크", "risk", "심사", "credit", "신용"),
-    "WM": ("wm", "wealth", "pb", "프라이빗뱅커", "고객자산"),
-    "핀테크": ("핀테크", "fintech", "데이터", "플랫폼", "payment", "페이먼트"),
-    "외국계": ("외국계", "global", "korea branch", "english", "영문", "영어"),
-    "백오피스": ("결제", "settlement", "운용지원", "컴플라이언스", "준법", "오퍼레이션"),
+TAG_PATTERNS = {
+    "IB": (
+        r"\binvestment banking\b",
+        r"\bIB\b",
+        r"\bM&A\b",
+        r"\bECM\b",
+        r"\bDCM\b",
+        r"\bIPO\b",
+        r"기업금융",
+        r"인수금융",
+        r"deal execution",
+        r"pitchbook",
+    ),
+    "자산운용": (r"자산운용", r"운용역", r"펀드", r"\bportfolio management\b", r"\basset management\b"),
+    "리서치": (r"리서치", r"\bresearch\b", r"\bRA\b", r"애널리스트", r"산업\s*분석", r"기업\s*분석"),
+    "퀀트": (r"퀀트", r"\bquant\b", r"파생", r"\bderivative", r"알고리즘"),
+    "리스크": (r"리스크", r"\brisk\b", r"심사", r"\bcredit\b", r"신용"),
+    "WM": (
+        r"\bwealth management\b",
+        r"\bprivate banking\b",
+        r"\bPB\b",
+        r"프라이빗뱅커",
+        r"고객자산",
+        r"자산관리\s*(?:영업|컨설팅|PB|WM)?",
+    ),
+    "핀테크": (r"핀테크", r"\bfintech\b", r"\bpayment", r"페이먼트"),
+    "외국계": (r"외국계", r"\bglobal\b", r"\bkorea branch\b", r"\benglish\b", r"영문", r"영어"),
+    "백오피스": (r"결제", r"\bsettlement\b", r"운용지원", r"컴플라이언스", r"준법", r"오퍼레이션"),
 }
+
+ROLE_FINANCE_PATTERNS = (
+    r"금융",
+    r"증권",
+    r"은행",
+    r"보험\s*(?:리스크|계리|IFRS|K-ICS|금융|상품|부채|자본)",
+    r"자산운용",
+    r"운용역",
+    r"펀드",
+    r"채권",
+    r"주식",
+    r"파생",
+    r"리스크",
+    r"신용",
+    r"여신",
+    r"기업\s*심사",
+    r"기업금융",
+    r"전략금융",
+    r"인수금융",
+    r"투자은행",
+    r"투자자",
+    r"재무모델",
+    r"재무\s*실사",
+    r"가치평가",
+    r"밸류에이션",
+    r"회계감사",
+    r"결산",
+    r"\bIB\b",
+    r"\bM&A\b",
+    r"\bECM\b",
+    r"\bDCM\b",
+    r"\bPE\b",
+    r"\bVC\b",
+    r"\bIPO\b",
+    r"\bfintech\b",
+    r"\bfinance\b",
+    r"\bfinancial institutions?\b",
+    r"\bfinancial markets?\b",
+    r"\bwholesale banking\b",
+    r"\bstructured finance\b",
+    r"\btransaction services?\b",
+    r"\blending\b",
+    r"\bsecurities\b",
+    r"\basset management\b",
+    r"\binvestment banking\b",
+    r"\bcapital markets?\b",
+    r"\bvaluation\b",
+    r"\brisk management\b",
+    r"\bportfolio\b",
+    r"\bcredit\b",
+)
+
+NON_FINANCE_ROLE_PATTERNS = (
+    r"\bexecutive assistant\b",
+    r"CEO\)?\s*의\s*시간",
+    r"비서",
+    r"경영지원",
+    r"총무",
+    r"상품권",
+    r"사택",
+    r"시설\s*관리",
+    r"IT\s*운영",
+    r"IT\s*개발",
+    r"정보보안",
+    r"모의해킹",
+    r"인사",
+    r"채용\s*(?:담당|운영|매니저)",
+    r"관세",
+    r"FTA\s*원산지",
+    r"해외시장조사",
+    r"이사회",
+    r"주주총회",
+    r"법인\s*관련\s*문서",
+)
 
 
 def normalize_text(value: str | None) -> str:
@@ -72,6 +165,10 @@ def normalize_text(value: str | None) -> str:
         return ""
     value = unicodedata.normalize("NFKC", str(value))
     return re.sub(r"\s+", " ", value).strip()
+
+
+def has_any_pattern(text: str, patterns: tuple[str, ...]) -> bool:
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
 
 
 def slugify(value: str) -> str:
@@ -86,8 +183,20 @@ def is_finance_relevant(*parts: str | None) -> bool:
     return any(keyword in text for keyword in FINANCE_KEYWORDS)
 
 
+def is_finance_role_relevant(*parts: str | None) -> bool:
+    text = " ".join(normalize_text(part) for part in parts if part)
+    return has_any_pattern(text, ROLE_FINANCE_PATTERNS)
+
+
+def is_non_finance_role(*parts: str | None) -> bool:
+    text = " ".join(normalize_text(part) for part in parts if part)
+    return has_any_pattern(text, NON_FINANCE_ROLE_PATTERNS)
+
+
 def is_entry_or_intern(*parts: str | None) -> bool:
     text = " ".join(normalize_text(part).lower() for part in parts if part)
+    if any(keyword in text for keyword in NON_TARGET_LEVEL_KEYWORDS):
+        return False
     if any(keyword in text for keyword in INTERN_KEYWORDS):
         return True
     if any(keyword in text for keyword in ENTRY_KEYWORDS):
@@ -102,6 +211,8 @@ def looks_senior(*parts: str | None) -> bool:
 
 def detect_level(*parts: str | None) -> str:
     text = " ".join(normalize_text(part).lower() for part in parts if part)
+    if any(keyword in text for keyword in NON_TARGET_LEVEL_KEYWORDS):
+        return "unknown"
     if any(keyword in text for keyword in INTERN_KEYWORDS):
         return "intern"
     if any(keyword in text for keyword in ENTRY_KEYWORDS):
@@ -122,10 +233,10 @@ def detect_employment_type(level: str, *parts: str | None) -> str:
 
 
 def detect_tags(*parts: str | None) -> list[str]:
-    text = " ".join(normalize_text(part).lower() for part in parts if part)
+    text = " ".join(normalize_text(part) for part in parts if part)
     tags: list[str] = []
-    for tag, keywords in TAG_RULES.items():
-        if any(keyword.lower() in text for keyword in keywords):
+    for tag, patterns in TAG_PATTERNS.items():
+        if has_any_pattern(text, patterns):
             tags.append(tag)
     level = detect_level(text)
     if level == "intern":

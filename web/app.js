@@ -18,7 +18,12 @@ const state = {
   user: JSON.parse(localStorage.getItem(USER_KEY) || "null"),
   jobs: [],
   selectedId: "",
-  config: { saramin_configured: false, saramin_key_masked: "" },
+  config: {
+    saramin_configured: false,
+    saramin_key_masked: "",
+    telegram_configured: false,
+    telegram_token_masked: "",
+  },
   filters: {
     q: "",
     level: "all",
@@ -42,6 +47,9 @@ const els = {
   settingsDialog: document.querySelector("#settingsDialog"),
   settingsForm: document.querySelector("#settingsForm"),
   settingsMeta: document.querySelector("#settingsMeta"),
+  copyFiltersToNotify: document.querySelector("#copyFiltersToNotify"),
+  telegramLookup: document.querySelector("#telegramLookup"),
+  telegramTest: document.querySelector("#telegramTest"),
   searchInput: document.querySelector("#searchInput"),
   levelFilter: document.querySelector("#levelFilter"),
   sourceFilter: document.querySelector("#sourceFilter"),
@@ -72,6 +80,17 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function parseList(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function joinList(value) {
+  return Array.isArray(value) ? value.join(", ") : "";
 }
 
 function showToast(message) {
@@ -165,7 +184,7 @@ async function fetchMe() {
 
 async function fetchJobs() {
   setSync("불러오는 중");
-  const data = await apiFetch("/api/jobs?include_hidden=true");
+  const data = await apiFetch("/api/jobs");
   state.jobs = data.jobs || [];
   if (state.selectedId && !state.jobs.some((job) => job.id === state.selectedId)) {
     state.selectedId = "";
@@ -228,7 +247,7 @@ function visibleJobs() {
   return state.jobs
     .filter((job) => {
       const personal = userState(job);
-      if (job.hidden) return false;
+      if (job.hidden || job.auto_hidden) return false;
       if (state.filters.level !== "all" && job.level !== state.filters.level) return false;
       if (state.filters.source !== "all" && job.source !== state.filters.source) return false;
       if (state.filters.status === "watching" && !personal.saved) return false;
@@ -303,7 +322,7 @@ function renderTagFilters() {
 }
 
 function renderMetrics() {
-  const visible = state.jobs.filter((job) => !job.hidden);
+  const visible = state.jobs.filter((job) => !job.hidden && !job.auto_hidden);
   const active = visible.filter((job) => (daysLeft(job) ?? 1) >= 0);
   els.metricActive.textContent = active.length;
   els.metricSoon.textContent = active.filter((job) => {
@@ -390,8 +409,11 @@ function renderJobCard(job) {
   const personal = userState(job);
   const sample = job.is_sample ? `<span class="sample-pill">샘플</span>` : "";
   const saved = personal.saved ? `<span class="saved-pill">내 관심</span>` : "";
+  const recommended = job.featured
+    ? `<span class="recommended-pill">추천 ${Number(job.reaction_count || 0)}명</span>`
+    : "";
   return `
-    <article class="job-card${selected ? " selected" : ""}">
+    <article class="job-card${selected ? " selected" : ""}${job.featured ? " recommended" : ""}">
       <button class="job-summary" type="button" data-select="${escapeHtml(job.id)}" aria-expanded="${selected ? "true" : "false"}">
         <div class="card-top">
           <div>
@@ -405,6 +427,7 @@ function renderJobCard(job) {
           <span>${escapeHtml(job.employment_type || "고용형태 확인")}</span>
           <span>${escapeHtml(job.location || "지역 확인")}</span>
           <span>${escapeHtml(job.source || "출처 확인")}</span>
+          ${recommended}
           ${personal.status === "applied" ? `<span class="status-pill">${escapeHtml(STATUS_LABELS.applied)}</span>` : ""}
           ${saved}
           ${sample}
@@ -446,12 +469,23 @@ function updateLocalJob(jobId, userStateUpdates) {
   };
 }
 
+function replaceLocalJob(updatedJob) {
+  if (!updatedJob?.id) return;
+  const index = state.jobs.findIndex((job) => job.id === updatedJob.id);
+  if (index >= 0) {
+    state.jobs[index] = updatedJob;
+  } else if (!updatedJob.hidden && !updatedJob.auto_hidden) {
+    state.jobs.push(updatedJob);
+  }
+}
+
 async function patchPersonalJob(id, updates) {
   const data = await apiFetch(`/api/user/jobs/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: JSON.stringify(updates),
   });
-  updateLocalJob(id, data.user_state);
+  if (data.job) replaceLocalJob(data.job);
+  else updateLocalJob(id, data.user_state);
   render();
 }
 
@@ -483,36 +517,86 @@ async function addJob(form) {
 }
 
 function updateSettingsMeta() {
-  const configured = state.config.saramin_configured
+  const saramin = state.config.saramin_configured
     ? `공유 사람인 키 저장됨: ${state.config.saramin_key_masked}. 서버가 1시간마다 자동 수집합니다.`
     : "공유 사람인 키 미설정. KOFIA는 서버가 1시간마다 자동 수집합니다.";
-  els.settingsMeta.textContent = configured;
+  const telegram = state.config.telegram_configured
+    ? `텔레그램 봇 연결됨: ${state.config.telegram_token_masked}.`
+    : "텔레그램 봇 토큰 미설정.";
+  els.settingsMeta.textContent = `${saramin} ${telegram}`;
+}
+
+function populateNotificationForm() {
+  const notification = state.user?.notification || {};
+  const filters = notification.filters || {};
+  els.settingsForm.elements.notify_enabled.checked = Boolean(notification.enabled);
+  els.settingsForm.elements.telegram_chat_id.value = notification.telegram_chat_id || "";
+  els.settingsForm.elements.notify_q.value = filters.q || "";
+  els.settingsForm.elements.notify_levels.value = joinList(filters.levels);
+  els.settingsForm.elements.notify_sources.value = joinList(filters.sources);
+  els.settingsForm.elements.notify_tags.value = joinList(filters.tags);
+  els.settingsForm.elements.notify_deadline_days.value = filters.deadline_days || "";
+}
+
+function copyCurrentFiltersToNotificationForm() {
+  els.settingsForm.elements.notify_q.value = state.filters.q || "";
+  els.settingsForm.elements.notify_levels.value = state.filters.level === "all" ? "" : state.filters.level;
+  els.settingsForm.elements.notify_sources.value = state.filters.source === "all" ? "" : state.filters.source;
+  els.settingsForm.elements.notify_tags.value = [...state.filters.tags].join(", ");
+  els.settingsForm.elements.notify_deadline_days.value = state.filters.deadlineOnly ? "7" : "";
+  els.settingsForm.elements.notify_enabled.checked = true;
+}
+
+async function saveNotificationSettings(form) {
+  const formData = new FormData(form);
+  const payload = {
+    enabled: formData.get("notify_enabled") === "on",
+    telegram_chat_id: String(formData.get("telegram_chat_id") || "").trim(),
+    filters: {
+      q: String(formData.get("notify_q") || "").trim(),
+      levels: parseList(formData.get("notify_levels")),
+      sources: parseList(formData.get("notify_sources")),
+      tags: parseList(formData.get("notify_tags")),
+      deadline_days: Number(formData.get("notify_deadline_days") || 0),
+      featured_only: false,
+    },
+  };
+  const data = await apiFetch("/api/me/notification", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  state.user.notification = data.notification;
+  localStorage.setItem(USER_KEY, JSON.stringify(state.user));
 }
 
 async function saveSettings(form) {
   const formData = new FormData(form);
   const payload = {};
   const saraminKey = String(formData.get("saramin_access_key") || "").trim();
+  const telegramToken = String(formData.get("telegram_bot_token") || "").trim();
   const newPassword = String(formData.get("new_password") || "").trim();
   if (saraminKey) payload.saramin_access_key = saraminKey;
+  if (telegramToken) payload.telegram_bot_token = telegramToken;
   if (newPassword) payload.new_password = newPassword;
-  if (!Object.keys(payload).length) {
-    showToast("변경할 값이 없습니다.");
-    return;
+  let data = {};
+  await saveNotificationSettings(form);
+  if (Object.keys(payload).length) {
+    data = await apiFetch("/api/config", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+    state.config = {
+      saramin_configured: data.saramin_configured,
+      saramin_key_masked: data.saramin_key_masked,
+      telegram_configured: data.telegram_configured,
+      telegram_token_masked: data.telegram_token_masked,
+    };
+    if (data.import_result && !data.import_result.skipped) {
+      state.jobs = data.import_result.jobs || state.jobs;
+      render();
+    }
   }
-  const data = await apiFetch("/api/config", {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-  });
-  state.config = {
-    saramin_configured: data.saramin_configured,
-    saramin_key_masked: data.saramin_key_masked,
-  };
   updateSettingsMeta();
-  if (data.import_result && !data.import_result.skipped) {
-    state.jobs = data.import_result.jobs || state.jobs;
-    render();
-  }
   if (data.password_changed) {
     logout(false);
     showToast("비밀번호가 변경되었습니다. 다시 로그인해 주세요.");
@@ -521,6 +605,45 @@ async function saveSettings(form) {
   } else {
     showToast("설정을 저장했습니다.");
   }
+}
+
+async function sendTelegramTest() {
+  const telegramToken = String(new FormData(els.settingsForm).get("telegram_bot_token") || "").trim();
+  if (telegramToken) {
+    const data = await apiFetch("/api/config", {
+      method: "PATCH",
+      body: JSON.stringify({ telegram_bot_token: telegramToken }),
+    });
+    state.config = {
+      saramin_configured: data.saramin_configured,
+      saramin_key_masked: data.saramin_key_masked,
+      telegram_configured: data.telegram_configured,
+      telegram_token_masked: data.telegram_token_masked,
+    };
+  }
+  await saveNotificationSettings(els.settingsForm);
+  await apiFetch("/api/telegram/test", { method: "POST" });
+  showToast("텔레그램 테스트 메시지를 보냈습니다.");
+}
+
+async function lookupTelegramChatId() {
+  const telegramToken = String(new FormData(els.settingsForm).get("telegram_bot_token") || "").trim();
+  if (telegramToken) {
+    const data = await apiFetch("/api/config", {
+      method: "PATCH",
+      body: JSON.stringify({ telegram_bot_token: telegramToken }),
+    });
+    state.config = {
+      saramin_configured: data.saramin_configured,
+      saramin_key_masked: data.saramin_key_masked,
+      telegram_configured: data.telegram_configured,
+      telegram_token_masked: data.telegram_token_masked,
+    };
+    updateSettingsMeta();
+  }
+  const chat = await apiFetch("/api/telegram/latest-chat", { method: "POST" });
+  els.settingsForm.elements.telegram_chat_id.value = chat.chat_id || "";
+  showToast(chat.name ? `${chat.name} chat_id를 가져왔습니다.` : "chat_id를 가져왔습니다.");
 }
 
 function bindEvents() {
@@ -544,8 +667,30 @@ function bindEvents() {
 
   els.settingsButton.addEventListener("click", () => {
     els.settingsForm.reset();
+    populateNotificationForm();
     updateSettingsMeta();
     els.settingsDialog.showModal();
+  });
+
+  els.copyFiltersToNotify.addEventListener("click", () => {
+    copyCurrentFiltersToNotificationForm();
+    showToast("현재 필터를 알림 필터로 복사했습니다.");
+  });
+
+  els.telegramLookup.addEventListener("click", async () => {
+    try {
+      await lookupTelegramChatId();
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
+  els.telegramTest.addEventListener("click", async () => {
+    try {
+      await sendTelegramTest();
+    } catch (error) {
+      showToast(error.message);
+    }
   });
 
   els.settingsForm.addEventListener("submit", async (event) => {
