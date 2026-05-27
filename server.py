@@ -34,6 +34,7 @@ TOKEN_TTL_SECONDS = 60 * 60 * 24 * 14
 KOFIA_REFRESH_SECONDS = 60 * 60
 RECOMMENDATION_THRESHOLD = 5
 JOB_MAX_AGE_DAYS = 90
+TELEGRAM_TEST_MAX_JOBS = 10
 ROLLING_DEADLINES = {"상시", "수시", "채용시"}
 DEFAULT_KOFIA_PAGES = 10
 DATA_LOCK = threading.RLock()
@@ -630,7 +631,14 @@ def notify_matching_users(new_jobs: list[dict]) -> dict:
     return {"sent": sent, "errors": errors, "skipped": False}
 
 
-def notify_user_for_existing_matches(user_id: str) -> dict:
+def notify_user_for_existing_matches(
+    user_id: str,
+    *,
+    include_already_notified: bool = False,
+    mark_notified: bool = True,
+    max_send: int | None = None,
+    require_enabled: bool = True,
+) -> dict:
     result = {
         "sent": 0,
         "matched": 0,
@@ -639,6 +647,8 @@ def notify_user_for_existing_matches(user_id: str) -> dict:
         "errors": [],
         "skipped": False,
         "reason": "",
+        "limited": False,
+        "limit": max_send or 0,
     }
     config = ensure_config()
     token = str(config.get("telegram_bot_token") or "").strip()
@@ -653,7 +663,7 @@ def notify_user_for_existing_matches(user_id: str) -> dict:
         return result
 
     settings = sanitize_notification_settings({}, user.get("notification") or {})
-    if not settings.get("enabled"):
+    if require_enabled and not settings.get("enabled"):
         result.update({"skipped": True, "reason": "disabled"})
         return result
     if not settings.get("telegram_chat_id"):
@@ -671,8 +681,11 @@ def notify_user_for_existing_matches(user_id: str) -> dict:
         if not notification_matches(job, settings.get("filters") or {}):
             continue
         result["matched"] += 1
-        if job_id in (settings.get("notified_jobs") or {}):
+        if not include_already_notified and job_id in (settings.get("notified_jobs") or {}):
             result["already_notified"] += 1
+            continue
+        if max_send is not None and result["attempted"] >= max_send:
+            result["limited"] = True
             continue
         result["attempted"] += 1
         try:
@@ -680,10 +693,11 @@ def notify_user_for_existing_matches(user_id: str) -> dict:
         except Exception as exc:
             result["errors"].append(f"{job_id}:{exc}")
             continue
-        settings.setdefault("notified_jobs", {})[job_id] = now_iso()
+        if mark_notified:
+            settings.setdefault("notified_jobs", {})[job_id] = now_iso()
         result["sent"] += 1
 
-    if result["sent"]:
+    if result["sent"] and mark_notified:
         user["notification"] = settings
         user["updated_at"] = now_iso()
         users["users"][user_id] = user
@@ -936,9 +950,8 @@ class SRFHandler(SimpleHTTPRequestHandler):
             saved_user["updated_at"] = now_iso()
             users["users"][user["id"]] = saved_user
             save_users(users)
-            notify_result = notify_user_for_existing_matches(user["id"])
             refreshed = load_users()["users"].get(user["id"], saved_user)
-            self._send_json({"notification": refreshed["notification"], "notification_result": notify_result})
+            self._send_json({"notification": refreshed["notification"]})
             return
 
         user_match = re.fullmatch(r"/api/user/jobs/([^/]+)", parsed.path)
@@ -1040,11 +1053,17 @@ class SRFHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "내 텔레그램 chat_id를 먼저 저장해 주세요."}, HTTPStatus.BAD_REQUEST)
                 return
             try:
-                send_telegram_message(token, chat_id, "SRF Jobs 텔레그램 알림 테스트입니다.")
+                result = notify_user_for_existing_matches(
+                    user["id"],
+                    include_already_notified=True,
+                    mark_notified=False,
+                    max_send=TELEGRAM_TEST_MAX_JOBS,
+                    require_enabled=False,
+                )
             except Exception as exc:
                 self._send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
                 return
-            self._send_json({"sent": True})
+            self._send_json({"notification_result": result})
             return
 
         if parsed.path == "/api/telegram/link-code":
@@ -1072,7 +1091,6 @@ class SRFHandler(SimpleHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
                 return
-            result["notification_result"] = notify_user_for_existing_matches(user["id"])
             refreshed = load_users()["users"].get(user["id"])
             if refreshed:
                 result["notification"] = refreshed.get("notification", result.get("notification"))

@@ -645,7 +645,7 @@ async function saveNotificationSettings(form) {
   });
   state.user.notification = data.notification;
   localStorage.setItem(USER_KEY, JSON.stringify(state.user));
-  return data.notification_result || { sent: 0 };
+  return data;
 }
 
 function notificationResultText(result, baseMessage) {
@@ -656,8 +656,11 @@ function notificationResultText(result, baseMessage) {
   if (sent > 0 && errors.length) {
     return `${baseMessage}. 기존 공고 ${sent}개를 보냈고, ${errors.length}개는 실패했습니다.`;
   }
+  if (sent > 0 && result?.limited) {
+    return `${baseMessage}. 조건에 맞는 공고 ${matched}개 중 ${sent}개만 보냈습니다.`;
+  }
   if (sent > 0) {
-    return `${baseMessage}. 기존 공고 ${sent}개를 텔레그램으로 보냈습니다.`;
+    return `${baseMessage}. 조건에 맞는 공고 ${sent}개를 텔레그램으로 보냈습니다.`;
   }
   if (result?.reason === "no_chat") {
     return `${baseMessage}. 텔레그램 연결 확인을 먼저 완료해야 발송됩니다.`;
@@ -681,16 +684,16 @@ function notificationResultText(result, baseMessage) {
 }
 
 async function saveSettings(form) {
-  const result = await saveNotificationSettings(form);
+  await saveNotificationSettings(form);
   updateSettingsMeta();
-  showToast(notificationResultText(result, "설정을 저장했습니다"));
-  return result;
+  showToast("설정을 저장했습니다.");
+  return { reason: "" };
 }
 
 async function sendTelegramTest() {
   await saveNotificationSettings(els.settingsForm);
-  await apiFetch("/api/telegram/test", { method: "POST" });
-  showToast("텔레그램 테스트 메시지를 보냈습니다.");
+  const data = await apiFetch("/api/telegram/test", { method: "POST" });
+  showToast(notificationResultText(data.notification_result || {}, "테스트 발송 결과"));
 }
 
 async function createTelegramLinkCode() {
@@ -710,7 +713,7 @@ async function claimTelegramChat() {
   localStorage.setItem(USER_KEY, JSON.stringify(state.user));
   populateNotificationForm();
   const base = data.name ? `${data.name} 텔레그램을 연결했습니다.` : "텔레그램을 연결했습니다.";
-  showToast(notificationResultText(data.notification_result || {}, base));
+  showToast(base);
 }
 
 function bindEvents() {

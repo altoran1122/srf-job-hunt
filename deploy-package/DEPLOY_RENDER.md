@@ -22,7 +22,9 @@ srf-job-hunt
 4. Render should detect `render.yaml`.
 5. Fill required environment variables:
    - `SRF_PASSWORD`: the shared SRF login password.
-6. Do not add `SARAMIN_ACCESS_KEY` during the first deployment if Saramin has not approved the API yet. Add it later inside the SRF Jobs settings screen.
+   - `TELEGRAM_BOT_TOKEN`: optional, required for Telegram alerts.
+   - `SARAMIN_ACCESS_KEY`: optional, add after Saramin approves the API.
+6. Sensitive values are configured in Render environment variables, not in the SRF Jobs web settings screen.
 
 ## 3. Public URL
 
@@ -34,17 +36,30 @@ https://srf-job-hunt.onrender.com
 
 Use that URL in the Saramin API application form.
 
-## 4. Persistence Note
+## 4. Persistent Disk
 
-The app stores jobs, user comments, settings, and API keys in JSON files. On Render Free, filesystem changes can disappear after a restart or redeploy.
+The app stores jobs, user comments, notification settings, and local config in JSON files.
+Without a Render disk, filesystem changes can disappear after a restart or redeploy.
 
-For real club use, add a persistent disk to the Render web service:
+Add a persistent disk to the Render web service:
 
 ```text
+Disk name: srf-data
 Mount path: /opt/render/project/src/runtime-data
+Size: 1 GB
 ```
 
 The app already reads `SRF_DATA_DIR=/opt/render/project/src/runtime-data`, so no code change is needed.
+
+After adding the disk:
+
+1. Redeploy or restart the service.
+2. Save a test comment in SRF Jobs.
+3. Redeploy once more.
+4. Confirm that the comment still exists.
+
+The first time an empty disk is mounted, Render may hide the old temporary runtime files at that mount path.
+If important user data already exists before adding the disk, export or copy it first.
 
 ## 5. Saramin Review Text
 

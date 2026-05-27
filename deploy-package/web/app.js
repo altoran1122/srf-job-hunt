@@ -327,14 +327,16 @@ function renderTagFilters() {
 function renderNotificationTagChoices() {
   const tags = uniqueTags();
   const activeTags = new Set(state.user?.notification?.filters?.tags || []);
+  const excludedTags = new Set(state.user?.notification?.filters?.excluded_tags || []);
   if (!tags.length) {
     els.notifyTagChoices.innerHTML = `<span class="muted-text">태그 없음</span>`;
     return;
   }
   els.notifyTagChoices.innerHTML = tags
     .map((tag) => {
-      const active = activeTags.has(tag) ? " active" : "";
-      return `<button class="tag-filter${active}" type="button" data-notify-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</button>`;
+      const stateClass = excludedTags.has(tag) ? " excluded" : activeTags.has(tag) ? " active" : "";
+      const mode = excludedTags.has(tag) ? "제외" : activeTags.has(tag) ? "포함" : "해제";
+      return `<button class="tag-filter${stateClass}" type="button" data-notify-tag="${escapeHtml(tag)}" title="${escapeHtml(mode)}: ${escapeHtml(tag)}">${escapeHtml(tag)}</button>`;
     })
     .join("");
 }
@@ -349,6 +351,47 @@ function renderMetrics() {
   }).length;
   els.metricSaved.textContent = visible.filter((job) => userState(job).saved).length;
   els.metricComments.textContent = visible.filter((job) => userState(job).comment).length;
+}
+
+function jobComments(job) {
+  return Array.isArray(job.comments) ? job.comments : [];
+}
+
+function renderCommentPreview(job, personal) {
+  const comments = jobComments(job);
+  const latest = comments[0];
+  if (latest) {
+    return `<p class="comment-preview"><strong>${escapeHtml(latest.display_name || "SRF")}</strong> ${escapeHtml(latest.comment)}</p>`;
+  }
+  if (personal.comment) {
+    return `<p class="comment-preview"><strong>${escapeHtml(state.user?.display_name || "나")}</strong> ${escapeHtml(personal.comment)}</p>`;
+  }
+  return "";
+}
+
+function renderCommentList(job) {
+  const comments = jobComments(job);
+  if (!comments.length) {
+    return `<p class="muted-text comment-empty">아직 코멘트가 없습니다.</p>`;
+  }
+  return `<div class="comment-list">${comments
+    .map((item) => {
+      const mine = item.is_mine ? `<span class="my-comment-pill">내 코멘트</span>` : "";
+      const deleteButton = item.is_mine
+        ? `<button class="button ghost danger small-button" type="button" data-delete-comment="${escapeHtml(job.id)}">삭제</button>`
+        : "";
+      return `
+        <div class="comment-item">
+          <div class="comment-head">
+            <strong>${escapeHtml(item.display_name || "SRF")}</strong>
+            ${mine}
+            ${deleteButton}
+          </div>
+          <p>${escapeHtml(item.comment)}</p>
+        </div>
+      `;
+    })
+    .join("")}</div>`;
 }
 
 function splitBullets(value) {
@@ -380,7 +423,6 @@ function renderDetail(job) {
   const summary = job.summary || {};
   const personal = userState(job);
   const sourceUrl = job.source_url || job.apply_url || "";
-  const applyUrl = job.apply_url || job.source_url || "";
   return `
     <div class="job-detail">
       <div class="detail-actions">
@@ -407,14 +449,17 @@ function renderDetail(job) {
         </section>
       </div>
 
+      <section class="comments-panel">
+        <span class="summary-label">코멘트</span>
+        ${renderCommentList(job)}
+      </section>
       <label class="field note-field">
-        <span>내 코멘트</span>
+        <span>코멘트 달기</span>
         <textarea data-comment-input="${escapeHtml(job.id)}" placeholder="예: 영문 CV 필요, 마감 전 리마인드">${escapeHtml(personal.comment || "")}</textarea>
       </label>
       <div class="detail-bottom">
         <button class="button" type="button" data-save-comment="${escapeHtml(job.id)}">코멘트 저장</button>
         <div class="link-row">
-          ${linkButton(applyUrl, "지원 링크")}
           ${linkButton(sourceUrl, "원문 보기")}
         </div>
       </div>
@@ -427,6 +472,7 @@ function renderJobCard(job) {
   const personal = userState(job);
   const sample = job.is_sample ? `<span class="sample-pill">샘플</span>` : "";
   const saved = personal.saved ? `<span class="saved-pill">내 관심</span>` : "";
+  const commentPreview = renderCommentPreview(job, personal);
   const recommended = job.featured
     ? `<span class="recommended-pill">추천 ${Number(job.reaction_count || 0)}명</span>`
     : "";
@@ -455,6 +501,7 @@ function renderJobCard(job) {
             .map((tag) => `<span class="tag" data-inline-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`)
             .join("")}
         </div>
+        ${commentPreview}
       </button>
       ${selected ? renderDetail(job) : ""}
     </article>
@@ -564,6 +611,7 @@ function copyCurrentFiltersToNotificationForm() {
   notification.filters = {
     ...(notification.filters || {}),
     tags: [...state.filters.tags],
+    excluded_tags: [],
     q: "",
     levels: [],
     sources: [],
@@ -586,6 +634,7 @@ async function saveNotificationSettings(form) {
       levels: [],
       sources: [],
       tags: filters.tags || [],
+      excluded_tags: filters.excluded_tags || [],
       deadline_days: 0,
       featured_only: false,
     },
@@ -596,18 +645,55 @@ async function saveNotificationSettings(form) {
   });
   state.user.notification = data.notification;
   localStorage.setItem(USER_KEY, JSON.stringify(state.user));
+  return data;
+}
+
+function notificationResultText(result, baseMessage) {
+  const sent = Number(result?.sent || 0);
+  const matched = Number(result?.matched || 0);
+  const alreadyNotified = Number(result?.already_notified || 0);
+  const errors = result?.errors || [];
+  if (sent > 0 && errors.length) {
+    return `${baseMessage}. 기존 공고 ${sent}개를 보냈고, ${errors.length}개는 실패했습니다.`;
+  }
+  if (sent > 0 && result?.limited) {
+    return `${baseMessage}. 조건에 맞는 공고 ${matched}개 중 ${sent}개만 보냈습니다.`;
+  }
+  if (sent > 0) {
+    return `${baseMessage}. 조건에 맞는 공고 ${sent}개를 텔레그램으로 보냈습니다.`;
+  }
+  if (result?.reason === "no_chat") {
+    return `${baseMessage}. 텔레그램 연결 확인을 먼저 완료해야 발송됩니다.`;
+  }
+  if (result?.reason === "no_token") {
+    return `${baseMessage}. 서버에 텔레그램 봇 토큰이 없어 발송하지 못했습니다.`;
+  }
+  if (result?.reason === "no_tags") {
+    return `${baseMessage}. 알림 태그를 1개 이상 선택해야 발송됩니다.`;
+  }
+  if (result?.reason === "send_failed") {
+    return `${baseMessage}. 텔레그램 발송이 실패했습니다: ${errors[0] || "원인 확인 필요"}`;
+  }
+  if (matched > 0 && alreadyNotified >= matched) {
+    return `${baseMessage}. 매칭 공고 ${matched}개는 이미 알림 보낸 공고입니다.`;
+  }
+  if (matched === 0) {
+    return `${baseMessage}. 현재 선택한 태그와 맞는 기존 공고는 없습니다.`;
+  }
+  return baseMessage;
 }
 
 async function saveSettings(form) {
   await saveNotificationSettings(form);
   updateSettingsMeta();
   showToast("설정을 저장했습니다.");
+  return { reason: "" };
 }
 
 async function sendTelegramTest() {
   await saveNotificationSettings(els.settingsForm);
-  await apiFetch("/api/telegram/test", { method: "POST" });
-  showToast("텔레그램 테스트 메시지를 보냈습니다.");
+  const data = await apiFetch("/api/telegram/test", { method: "POST" });
+  showToast(notificationResultText(data.notification_result || {}, "테스트 발송 결과"));
 }
 
 async function createTelegramLinkCode() {
@@ -626,7 +712,8 @@ async function claimTelegramChat() {
   state.user.notification = data.notification;
   localStorage.setItem(USER_KEY, JSON.stringify(state.user));
   populateNotificationForm();
-  showToast(data.name ? `${data.name} 텔레그램을 연결했습니다.` : "텔레그램을 연결했습니다.");
+  const base = data.name ? `${data.name} 텔레그램을 연결했습니다.` : "텔레그램을 연결했습니다.";
+  showToast(base);
 }
 
 function bindEvents() {
@@ -688,8 +775,9 @@ function bindEvents() {
     if (event.submitter?.value === "cancel") return;
     event.preventDefault();
     try {
-      await saveSettings(els.settingsForm);
-      if (state.token) els.settingsDialog.close();
+      const result = await saveSettings(els.settingsForm);
+      const keepOpenReasons = new Set(["no_chat", "no_token", "no_tags", "send_failed"]);
+      if (state.token && !keepOpenReasons.has(result.reason)) els.settingsDialog.close();
     } catch (error) {
       showToast(error.message);
     }
@@ -742,13 +830,21 @@ function bindEvents() {
     const notification = state.user?.notification || {};
     const filters = notification.filters || {};
     const tags = new Set(filters.tags || []);
-    if (tags.has(tag)) tags.delete(tag);
-    else tags.add(tag);
+    const excludedTags = new Set(filters.excluded_tags || []);
+    if (tags.has(tag)) {
+      tags.delete(tag);
+      excludedTags.add(tag);
+    } else if (excludedTags.has(tag)) {
+      excludedTags.delete(tag);
+    } else {
+      tags.add(tag);
+    }
     state.user.notification = {
       ...notification,
       filters: {
         ...filters,
         tags: [...tags],
+        excluded_tags: [...excludedTags],
       },
     };
     localStorage.setItem(USER_KEY, JSON.stringify(state.user));
@@ -818,6 +914,18 @@ function bindEvents() {
       try {
         await patchPersonalJob(id, { comment: input?.value || "" });
         showToast("코멘트를 저장했습니다.");
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const deleteCommentButton = event.target.closest("[data-delete-comment]");
+    if (deleteCommentButton) {
+      const id = deleteCommentButton.dataset.deleteComment;
+      try {
+        await patchPersonalJob(id, { comment: "" });
+        showToast("내 코멘트를 삭제했습니다.");
       } catch (error) {
         showToast(error.message);
       }

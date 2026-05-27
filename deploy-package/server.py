@@ -34,6 +34,7 @@ TOKEN_TTL_SECONDS = 60 * 60 * 24 * 14
 KOFIA_REFRESH_SECONDS = 60 * 60
 RECOMMENDATION_THRESHOLD = 5
 JOB_MAX_AGE_DAYS = 90
+TELEGRAM_TEST_MAX_JOBS = 10
 ROLLING_DEADLINES = {"상시", "수시", "채용시"}
 DEFAULT_KOFIA_PAGES = 10
 DATA_LOCK = threading.RLock()
@@ -227,6 +228,7 @@ def default_notification_settings() -> dict:
             "levels": [],
             "sources": [],
             "tags": [],
+            "excluded_tags": [],
             "deadline_days": 0,
             "featured_only": False,
         },
@@ -256,6 +258,7 @@ def sanitize_notification_settings(payload: dict, current: dict | None = None) -
         filters["levels"] = listify(incoming.get("levels"))
         filters["sources"] = listify(incoming.get("sources"))
         filters["tags"] = listify(incoming.get("tags"))
+        filters["excluded_tags"] = listify(incoming.get("excluded_tags") or incoming.get("exclude_tags"))
         try:
             filters["deadline_days"] = max(0, min(90, int(incoming.get("deadline_days") or 0)))
         except (TypeError, ValueError):
@@ -276,6 +279,27 @@ def merge_user_state(job: dict, user: dict) -> dict:
         **(user.get("jobs", {}).get(job.get("id"), {}) or {}),
     }
     return merged
+
+
+def public_comments_for_job(users: dict, job_id: str | None, current_user_id: str | None = None) -> list[dict]:
+    if not job_id:
+        return []
+    comments = []
+    for user in users.get("users", {}).values():
+        state = (user.get("jobs", {}) or {}).get(job_id, {}) or {}
+        comment = str(state.get("comment") or "").strip()
+        if not comment:
+            continue
+        comments.append(
+            {
+                "user_id": user.get("id", ""),
+                "display_name": user.get("display_name") or user.get("id") or "SRF",
+                "comment": comment,
+                "updated_at": state.get("updated_at") or user.get("updated_at") or "",
+                "is_mine": user.get("id") == current_user_id,
+            }
+        )
+    return sorted(comments, key=lambda item: item.get("updated_at") or "", reverse=True)
 
 
 def update_user_job(user_id: str, job_id: str, updates: dict) -> dict:
@@ -385,7 +409,9 @@ def public_job_state(job: dict, users: dict) -> dict:
 
 
 def job_payload(job: dict, user: dict, users: dict) -> dict:
-    return merge_user_state(public_job_state(job, users), user)
+    payload = merge_user_state(public_job_state(job, users), user)
+    payload["comments"] = public_comments_for_job(users, payload.get("id"), user.get("id"))
+    return payload
 
 
 def jobs_payload(jobs: list[dict], user: dict, include_hidden: bool = False) -> list[dict]:
@@ -395,7 +421,9 @@ def jobs_payload(jobs: list[dict], user: dict, include_hidden: bool = False) -> 
         public = public_job_state(job, users)
         if (public.get("hidden") or public.get("auto_hidden")) and not include_hidden:
             continue
-        payload.append(merge_user_state(public, user))
+        merged = merge_user_state(public, user)
+        merged["comments"] = public_comments_for_job(users, merged.get("id"), user.get("id"))
+        payload.append(merged)
     return payload
 
 
@@ -429,7 +457,13 @@ def notification_matches(job: dict, filters: dict) -> bool:
     if sources and str(job.get("source") or "") not in sources:
         return False
     tags = listify(filters.get("tags"))
-    if tags and not any(tag in (job.get("tags") or []) for tag in tags):
+    if not tags:
+        return False
+    job_tags = set(job.get("tags") or [])
+    excluded_tags = set(listify(filters.get("excluded_tags") or filters.get("exclude_tags")))
+    if excluded_tags and job_tags.intersection(excluded_tags):
+        return False
+    if tags and not any(tag in job_tags for tag in tags):
         return False
     deadline_days = int(filters.get("deadline_days") or 0)
     if deadline_days:
@@ -595,6 +629,89 @@ def notify_matching_users(new_jobs: list[dict]) -> dict:
     if changed:
         save_users(users)
     return {"sent": sent, "errors": errors, "skipped": False}
+
+
+def notify_user_for_existing_matches(
+    user_id: str,
+    *,
+    include_already_notified: bool = False,
+    mark_notified: bool = True,
+    max_send: int | None = None,
+    require_enabled: bool = True,
+) -> dict:
+    result = {
+        "sent": 0,
+        "matched": 0,
+        "already_notified": 0,
+        "attempted": 0,
+        "errors": [],
+        "skipped": False,
+        "reason": "",
+        "limited": False,
+        "limit": max_send or 0,
+    }
+    config = ensure_config()
+    token = str(config.get("telegram_bot_token") or "").strip()
+    if not token:
+        result.update({"skipped": True, "reason": "no_token"})
+        return result
+
+    users = load_users()
+    user = users.get("users", {}).get(user_id)
+    if not user:
+        result.update({"skipped": True, "reason": "no_user"})
+        return result
+
+    settings = sanitize_notification_settings({}, user.get("notification") or {})
+    if require_enabled and not settings.get("enabled"):
+        result.update({"skipped": True, "reason": "disabled"})
+        return result
+    if not settings.get("telegram_chat_id"):
+        result.update({"skipped": True, "reason": "no_chat"})
+        return result
+    if not listify((settings.get("filters") or {}).get("tags")):
+        result.update({"skipped": True, "reason": "no_tags"})
+        return result
+
+    for raw_job in load_jobs():
+        job = public_job_state(raw_job, users)
+        job_id = job.get("id")
+        if not job_id or job.get("hidden") or job.get("auto_hidden"):
+            continue
+        if not notification_matches(job, settings.get("filters") or {}):
+            continue
+        result["matched"] += 1
+        if not include_already_notified and job_id in (settings.get("notified_jobs") or {}):
+            result["already_notified"] += 1
+            continue
+        if max_send is not None and result["attempted"] >= max_send:
+            result["limited"] = True
+            continue
+        result["attempted"] += 1
+        try:
+            send_telegram_message(token, settings["telegram_chat_id"], telegram_message(job))
+        except Exception as exc:
+            result["errors"].append(f"{job_id}:{exc}")
+            continue
+        if mark_notified:
+            settings.setdefault("notified_jobs", {})[job_id] = now_iso()
+        result["sent"] += 1
+
+    if result["sent"] and mark_notified:
+        user["notification"] = settings
+        user["updated_at"] = now_iso()
+        users["users"][user_id] = user
+        save_users(users)
+
+    if result["errors"]:
+        result["reason"] = "partial_send_failed" if result["sent"] else "send_failed"
+    elif result["matched"] == 0:
+        result["reason"] = "no_matches"
+    elif result["sent"] == 0 and result["already_notified"] >= result["matched"]:
+        result["reason"] = "all_already_notified"
+    elif result["sent"] == 0:
+        result["reason"] = "no_new_matches"
+    return result
 
 
 def merge_jobs(existing: list[dict], incoming: list[dict]) -> tuple[list[dict], int, list[dict]]:
@@ -833,7 +950,8 @@ class SRFHandler(SimpleHTTPRequestHandler):
             saved_user["updated_at"] = now_iso()
             users["users"][user["id"]] = saved_user
             save_users(users)
-            self._send_json({"notification": saved_user["notification"]})
+            refreshed = load_users()["users"].get(user["id"], saved_user)
+            self._send_json({"notification": refreshed["notification"]})
             return
 
         user_match = re.fullmatch(r"/api/user/jobs/([^/]+)", parsed.path)
@@ -935,11 +1053,17 @@ class SRFHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "내 텔레그램 chat_id를 먼저 저장해 주세요."}, HTTPStatus.BAD_REQUEST)
                 return
             try:
-                send_telegram_message(token, chat_id, "SRF Jobs 텔레그램 알림 테스트입니다.")
+                result = notify_user_for_existing_matches(
+                    user["id"],
+                    include_already_notified=True,
+                    mark_notified=False,
+                    max_send=TELEGRAM_TEST_MAX_JOBS,
+                    require_enabled=False,
+                )
             except Exception as exc:
                 self._send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
                 return
-            self._send_json({"sent": True})
+            self._send_json({"notification_result": result})
             return
 
         if parsed.path == "/api/telegram/link-code":
@@ -967,6 +1091,9 @@ class SRFHandler(SimpleHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
                 return
+            refreshed = load_users()["users"].get(user["id"])
+            if refreshed:
+                result["notification"] = refreshed.get("notification", result.get("notification"))
             self._send_json(result)
             return
 
