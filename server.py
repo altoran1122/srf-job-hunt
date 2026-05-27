@@ -125,6 +125,54 @@ def save_jobs(jobs: list[dict]) -> None:
     save_json(DATA_FILE, jobs)
 
 
+def normalize_tags(tags) -> list[str]:
+    normalized: list[str] = []
+    for tag in listify(tags):
+        tag = "리서치" if tag == "RA" else tag
+        if tag and tag not in normalized:
+            normalized.append(tag)
+    return normalized
+
+
+def is_sample_job(job: dict) -> bool:
+    return bool(job.get("is_sample")) or str(job.get("source") or "") == "Sample" or str(job.get("id") or "").startswith("sample-")
+
+
+def clean_runtime_data() -> None:
+    jobs = load_jobs()
+    cleaned_jobs = []
+    jobs_changed = False
+    for job in jobs:
+        if is_sample_job(job):
+            jobs_changed = True
+            continue
+        tags = normalize_tags(job.get("tags") or [])
+        if tags != (job.get("tags") or []):
+            job["tags"] = tags
+            job["updated_at"] = now_iso()
+            jobs_changed = True
+        cleaned_jobs.append(job)
+    if jobs_changed:
+        save_jobs(cleaned_jobs)
+
+    users = load_users()
+    users_changed = False
+    for user in users.get("users", {}).values():
+        settings = sanitize_notification_settings({}, user.get("notification") or {})
+        filters = settings.get("filters") or {}
+        tags = normalize_tags(filters.get("tags") or [])
+        excluded_tags = normalize_tags(filters.get("excluded_tags") or [])
+        if tags != (filters.get("tags") or []) or excluded_tags != (filters.get("excluded_tags") or []):
+            filters["tags"] = tags
+            filters["excluded_tags"] = excluded_tags
+            settings["filters"] = filters
+            user["notification"] = settings
+            user["updated_at"] = now_iso()
+            users_changed = True
+    if users_changed:
+        save_users(users)
+
+
 def load_users() -> dict:
     return load_json(USERS_FILE, {"users": {}})
 
@@ -1156,6 +1204,7 @@ class SRFHandler(SimpleHTTPRequestHandler):
 def main() -> None:
     ensure_data_files()
     ensure_config()
+    clean_runtime_data()
     start_auto_import_scheduler()
     port = int(os.environ.get("PORT", "8787"))
     host = os.environ.get("HOST") or ("0.0.0.0" if os.environ.get("RENDER") else "127.0.0.1")

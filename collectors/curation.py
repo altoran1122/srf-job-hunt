@@ -238,6 +238,16 @@ def detect_employment_type(level: str, *parts: str | None) -> str:
     return "확인 필요"
 
 
+def normalize_tags(tags) -> list[str]:
+    normalized: list[str] = []
+    for tag in tags or []:
+        tag = normalize_text(tag)
+        tag = "리서치" if tag == "RA" else tag
+        if tag and tag not in normalized:
+            normalized.append(tag)
+    return normalized
+
+
 def detect_tags(*parts: str | None) -> list[str]:
     text = " ".join(normalize_text(part) for part in parts if part)
     title_company_text = " ".join(normalize_text(part) for part in parts[:2] if part)
@@ -251,7 +261,7 @@ def detect_tags(*parts: str | None) -> list[str]:
         tags.append("인턴")
     elif level == "entry":
         tags.append("신입")
-    return tags[:6]
+    return normalize_tags(tags)[:6]
 
 
 def parse_deadline(*parts: str | None) -> str:
@@ -307,7 +317,7 @@ def curate_job(job: dict) -> dict:
     description = normalize_text(job.get("description"))
     level = job.get("level") or detect_level(title, description)
     deadline = job.get("deadline") or parse_deadline(title, description)
-    tags = job.get("tags") or detect_tags(title, company, description)
+    tags = normalize_tags(job.get("tags") or detect_tags(title, company, description))
 
     curated = dict(job)
     curated["title"] = title
