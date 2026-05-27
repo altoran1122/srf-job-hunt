@@ -227,6 +227,7 @@ def default_notification_settings() -> dict:
             "levels": [],
             "sources": [],
             "tags": [],
+            "excluded_tags": [],
             "deadline_days": 0,
             "featured_only": False,
         },
@@ -256,6 +257,7 @@ def sanitize_notification_settings(payload: dict, current: dict | None = None) -
         filters["levels"] = listify(incoming.get("levels"))
         filters["sources"] = listify(incoming.get("sources"))
         filters["tags"] = listify(incoming.get("tags"))
+        filters["excluded_tags"] = listify(incoming.get("excluded_tags") or incoming.get("exclude_tags"))
         try:
             filters["deadline_days"] = max(0, min(90, int(incoming.get("deadline_days") or 0)))
         except (TypeError, ValueError):
@@ -276,6 +278,27 @@ def merge_user_state(job: dict, user: dict) -> dict:
         **(user.get("jobs", {}).get(job.get("id"), {}) or {}),
     }
     return merged
+
+
+def public_comments_for_job(users: dict, job_id: str | None, current_user_id: str | None = None) -> list[dict]:
+    if not job_id:
+        return []
+    comments = []
+    for user in users.get("users", {}).values():
+        state = (user.get("jobs", {}) or {}).get(job_id, {}) or {}
+        comment = str(state.get("comment") or "").strip()
+        if not comment:
+            continue
+        comments.append(
+            {
+                "user_id": user.get("id", ""),
+                "display_name": user.get("display_name") or user.get("id") or "SRF",
+                "comment": comment,
+                "updated_at": state.get("updated_at") or user.get("updated_at") or "",
+                "is_mine": user.get("id") == current_user_id,
+            }
+        )
+    return sorted(comments, key=lambda item: item.get("updated_at") or "", reverse=True)
 
 
 def update_user_job(user_id: str, job_id: str, updates: dict) -> dict:
@@ -385,7 +408,9 @@ def public_job_state(job: dict, users: dict) -> dict:
 
 
 def job_payload(job: dict, user: dict, users: dict) -> dict:
-    return merge_user_state(public_job_state(job, users), user)
+    payload = merge_user_state(public_job_state(job, users), user)
+    payload["comments"] = public_comments_for_job(users, payload.get("id"), user.get("id"))
+    return payload
 
 
 def jobs_payload(jobs: list[dict], user: dict, include_hidden: bool = False) -> list[dict]:
@@ -395,7 +420,9 @@ def jobs_payload(jobs: list[dict], user: dict, include_hidden: bool = False) -> 
         public = public_job_state(job, users)
         if (public.get("hidden") or public.get("auto_hidden")) and not include_hidden:
             continue
-        payload.append(merge_user_state(public, user))
+        merged = merge_user_state(public, user)
+        merged["comments"] = public_comments_for_job(users, merged.get("id"), user.get("id"))
+        payload.append(merged)
     return payload
 
 
@@ -431,7 +458,11 @@ def notification_matches(job: dict, filters: dict) -> bool:
     tags = listify(filters.get("tags"))
     if not tags:
         return False
-    if tags and not any(tag in (job.get("tags") or []) for tag in tags):
+    job_tags = set(job.get("tags") or [])
+    excluded_tags = set(listify(filters.get("excluded_tags") or filters.get("exclude_tags")))
+    if excluded_tags and job_tags.intersection(excluded_tags):
+        return False
+    if tags and not any(tag in job_tags for tag in tags):
         return False
     deadline_days = int(filters.get("deadline_days") or 0)
     if deadline_days:
