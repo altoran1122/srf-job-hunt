@@ -24,7 +24,7 @@
     },
     "seongtae": {
       "id": "seongtae",
-      "display_name": "Seongtae",
+      "display_name": "seongtae",
       "jobs": {
         "kofia-40052": {
           "saved": false,
@@ -34,11 +34,11 @@
           "updated_at": "2026-05-27T00:50:13+09:00"
         },
         "sample-global-ib-entry": {
-          "saved": true,
+          "saved": false,
           "status": "passed",
           "comment": "",
           "hidden": true,
-          "updated_at": "2026-05-27T00:40:42+09:00"
+          "updated_at": "2026-05-27T09:41:28+09:00"
         },
         "sample-research-assistant": {
           "saved": false,
@@ -49,7 +49,7 @@
         }
       },
       "created_at": "2026-05-27T00:38:02+09:00",
-      "updated_at": "2026-05-27T00:50:13+09:00"
+      "updated_at": "2026-05-27T09:41:28+09:00"
     },
     "deploytest": {
       "id": "deploytest",

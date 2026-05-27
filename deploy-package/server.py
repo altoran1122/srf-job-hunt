@@ -16,8 +16,9 @@ import sys
 import threading
 import time
 from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
 
-from collectors.curation import curate_job, slugify
+from collectors.curation import curate_job, is_finance_role_relevant, is_non_finance_role, slugify
 
 
 ROOT = Path(__file__).resolve().parent
@@ -31,6 +32,10 @@ SEED_JOBS_FILE = REPO_DATA_DIR / "jobs.json"
 DEFAULT_PASSWORD = "srf2026"
 TOKEN_TTL_SECONDS = 60 * 60 * 24 * 14
 KOFIA_REFRESH_SECONDS = 60 * 60
+RECOMMENDATION_THRESHOLD = 5
+JOB_MAX_AGE_DAYS = 90
+ROLLING_DEADLINES = {"상시", "수시", "채용시"}
+DEFAULT_KOFIA_PAGES = 10
 DATA_LOCK = threading.RLock()
 
 
@@ -82,12 +87,23 @@ def check_password(password: str, password_config: dict) -> bool:
 def ensure_config() -> dict:
     config = load_json(CONFIG_FILE, None)
     if config:
+        changed = False
+        for key, value in {
+            "saramin_access_key": os.environ.get("SARAMIN_ACCESS_KEY", config.get("saramin_access_key", "")),
+            "telegram_bot_token": os.environ.get("TELEGRAM_BOT_TOKEN", config.get("telegram_bot_token", "")),
+        }.items():
+            if config.get(key) != value:
+                config[key] = value
+                changed = True
+        if changed:
+            save_config(config)
         return config
     initial_password = os.environ.get("SRF_PASSWORD", DEFAULT_PASSWORD)
     config = {
         "password": hash_password(initial_password),
         "token_secret": secrets.token_hex(32),
         "saramin_access_key": os.environ.get("SARAMIN_ACCESS_KEY", ""),
+        "telegram_bot_token": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
@@ -134,6 +150,7 @@ def ensure_user(display_name: str) -> dict:
             "id": user_id,
             "display_name": display_name.strip(),
             "jobs": {},
+            "notification": default_notification_settings(),
             "created_at": now_iso(),
             "updated_at": now_iso(),
         }
@@ -141,6 +158,11 @@ def ensure_user(display_name: str) -> dict:
         save_users(users)
     elif user.get("display_name") != display_name.strip():
         user["display_name"] = display_name.strip()
+        user["updated_at"] = now_iso()
+        users["users"][user_id] = user
+        save_users(users)
+    if "notification" not in user:
+        user["notification"] = default_notification_settings()
         user["updated_at"] = now_iso()
         users["users"][user_id] = user
         save_users(users)
@@ -195,6 +217,58 @@ def default_user_job_state() -> dict:
     return {"saved": False, "status": "none", "comment": "", "hidden": False}
 
 
+def default_notification_settings() -> dict:
+    return {
+        "enabled": False,
+        "telegram_chat_id": "",
+        "telegram_link_code": "",
+        "filters": {
+            "q": "",
+            "levels": [],
+            "sources": [],
+            "tags": [],
+            "deadline_days": 0,
+            "featured_only": False,
+        },
+        "notified_jobs": {},
+    }
+
+
+def listify(value) -> list[str]:
+    if isinstance(value, list):
+        raw = value
+    elif isinstance(value, str):
+        raw = value.split(",")
+    else:
+        raw = []
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
+def sanitize_notification_settings(payload: dict, current: dict | None = None) -> dict:
+    settings = {**default_notification_settings(), **(current or {})}
+    filters = {**default_notification_settings()["filters"], **(settings.get("filters") or {})}
+
+    if "enabled" in payload:
+        settings["enabled"] = bool(payload.get("enabled"))
+    if "filters" in payload:
+        incoming = payload.get("filters") or {}
+        filters["q"] = str(incoming.get("q") or "").strip()
+        filters["levels"] = listify(incoming.get("levels"))
+        filters["sources"] = listify(incoming.get("sources"))
+        filters["tags"] = listify(incoming.get("tags"))
+        try:
+            filters["deadline_days"] = max(0, min(90, int(incoming.get("deadline_days") or 0)))
+        except (TypeError, ValueError):
+            filters["deadline_days"] = 0
+        filters["featured_only"] = bool(incoming.get("featured_only"))
+
+    notified_jobs = settings.get("notified_jobs")
+    settings["notified_jobs"] = notified_jobs if isinstance(notified_jobs, dict) else {}
+    settings["telegram_link_code"] = str(settings.get("telegram_link_code") or "")
+    settings["filters"] = filters
+    return settings
+
+
 def merge_user_state(job: dict, user: dict) -> dict:
     merged = dict(job)
     merged["user_state"] = {
@@ -232,7 +306,298 @@ def update_user_job(user_id: str, job_id: str, updates: dict) -> dict:
     return state
 
 
-def merge_jobs(existing: list[dict], incoming: list[dict]) -> tuple[list[dict], int]:
+def parse_job_date(value: str | None):
+    if not value:
+        return None
+    value = str(value).strip()
+    if not value or value in ROLLING_DEADLINES:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(value[:10]).date()
+    except ValueError:
+        return None
+
+
+def summary_parts(job: dict) -> list[str]:
+    summary = job.get("summary") or {}
+    return [
+        str(job.get("title") or ""),
+        str(job.get("description") or ""),
+        str(summary.get("work") or ""),
+        str(summary.get("requirements") or ""),
+        str(summary.get("advantages") or ""),
+        str(summary.get("notice") or ""),
+    ]
+
+
+def is_rolling_job(job: dict) -> bool:
+    deadline = str(job.get("deadline") or "").strip()
+    if deadline in ROLLING_DEADLINES:
+        return True
+    text = " ".join(summary_parts(job))
+    return any(keyword in text for keyword in ("상시채용", "상시 모집", "채용시", "수시채용"))
+
+
+def auto_hidden_reason(job: dict) -> str:
+    if str(job.get("source") or "") == "Superookie":
+        employment = str(job.get("employment_type") or "")
+        if "주니어경력" in employment:
+            return "슈퍼루키 주니어경력 제외"
+        parts = summary_parts(job)
+        if is_non_finance_role(*parts):
+            return "금융회사 비금융직렬 제외"
+        if not is_finance_role_relevant(*parts):
+            return "금융직무 관련성 낮음"
+
+    if not is_rolling_job(job):
+        base_date = parse_job_date(job.get("published_at")) or parse_job_date(job.get("created_at"))
+        if base_date and (datetime.now().astimezone().date() - base_date).days > JOB_MAX_AGE_DAYS:
+            return "3개월 지난 공고"
+    return ""
+
+
+def reaction_count_for_job(users: dict, job_id: str | None) -> int:
+    if not job_id:
+        return 0
+    count = 0
+    for user in users.get("users", {}).values():
+        state = (user.get("jobs", {}) or {}).get(job_id, {}) or {}
+        if state.get("saved") or state.get("status") in {"watching", "applied"}:
+            count += 1
+    return count
+
+
+def public_job_state(job: dict, users: dict) -> dict:
+    public = dict(job)
+    public.pop("hidden_reason", None)
+    reaction_count = reaction_count_for_job(users, public.get("id"))
+    public["reaction_count"] = reaction_count
+    public["featured"] = reaction_count >= RECOMMENDATION_THRESHOLD
+    reason = auto_hidden_reason(public)
+    public["auto_hidden"] = bool(reason)
+    if reason:
+        public["hidden_reason"] = reason
+    return public
+
+
+def job_payload(job: dict, user: dict, users: dict) -> dict:
+    return merge_user_state(public_job_state(job, users), user)
+
+
+def jobs_payload(jobs: list[dict], user: dict, include_hidden: bool = False) -> list[dict]:
+    users = load_users()
+    payload = []
+    for job in jobs:
+        public = public_job_state(job, users)
+        if (public.get("hidden") or public.get("auto_hidden")) and not include_hidden:
+            continue
+        payload.append(merge_user_state(public, user))
+    return payload
+
+
+def days_until_deadline(job: dict) -> int | None:
+    deadline = parse_job_date(job.get("deadline"))
+    if not deadline:
+        return None
+    return (deadline - datetime.now().astimezone().date()).days
+
+
+def job_search_text(job: dict) -> str:
+    parts = [
+        job.get("company", ""),
+        job.get("title", ""),
+        job.get("source", ""),
+        job.get("location", ""),
+        job.get("employment_type", ""),
+        " ".join(job.get("tags") or []),
+        *summary_parts(job),
+    ]
+    return " ".join(str(part) for part in parts if part).lower()
+
+
+def notification_matches(job: dict, filters: dict) -> bool:
+    if filters.get("featured_only") and not job.get("featured"):
+        return False
+    levels = set(listify(filters.get("levels")))
+    if levels and str(job.get("level") or "") not in levels:
+        return False
+    sources = set(listify(filters.get("sources")))
+    if sources and str(job.get("source") or "") not in sources:
+        return False
+    tags = listify(filters.get("tags"))
+    if tags and not any(tag in (job.get("tags") or []) for tag in tags):
+        return False
+    deadline_days = int(filters.get("deadline_days") or 0)
+    if deadline_days:
+        left = days_until_deadline(job)
+        if left is None or left < 0 or left > deadline_days:
+            return False
+    query = str(filters.get("q") or "").strip().lower()
+    if query and query not in job_search_text(job):
+        return False
+    return True
+
+
+def telegram_message(job: dict) -> str:
+    tags = ", ".join(job.get("tags") or [])
+    deadline = job.get("deadline") or "마감 확인"
+    link = job.get("apply_url") or job.get("source_url") or ""
+    lines = [
+        "[SRF 새 공고]",
+        f"{job.get('company', '회사 확인')}",
+        f"{job.get('title', '공고명 확인')}",
+        f"구분: {job.get('employment_type') or job.get('level') or '확인 필요'}",
+        f"마감: {deadline}",
+    ]
+    if tags:
+        lines.append(f"태그: {tags}")
+    if link:
+        lines.append(f"링크: {link}")
+    return "\n".join(lines)
+
+
+def send_telegram_message(token: str, chat_id: str, text: str) -> None:
+    payload = json.dumps(
+        {
+            "chat_id": chat_id,
+            "text": text[:4000],
+            "disable_web_page_preview": False,
+        }
+    ).encode("utf-8")
+    request = Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=15) as response:
+        body = json.loads(response.read().decode("utf-8"))
+        if not body.get("ok"):
+            raise RuntimeError(body.get("description") or "Telegram sendMessage failed")
+
+
+def latest_telegram_chat(token: str) -> dict:
+    request = Request(f"https://api.telegram.org/bot{token}/getUpdates", method="GET")
+    with urlopen(request, timeout=15) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    if not body.get("ok"):
+        raise RuntimeError(body.get("description") or "Telegram getUpdates failed")
+    for update in reversed(body.get("result") or []):
+        message = update.get("message") or update.get("edited_message") or {}
+        chat = message.get("chat") or {}
+        if chat.get("id"):
+            name = " ".join(
+                str(part)
+                for part in (chat.get("first_name"), chat.get("last_name"), chat.get("username"))
+                if part
+            ).strip()
+            return {"chat_id": str(chat["id"]), "name": name, "type": chat.get("type", "")}
+    raise RuntimeError("최근 텔레그램 대화를 찾지 못했습니다. 봇에게 /start를 먼저 보내 주세요.")
+
+
+def telegram_updates(token: str) -> list[dict]:
+    request = Request(f"https://api.telegram.org/bot{token}/getUpdates", method="GET")
+    with urlopen(request, timeout=15) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    if not body.get("ok"):
+        raise RuntimeError(body.get("description") or "Telegram getUpdates failed")
+    return body.get("result") or []
+
+
+def create_telegram_link_code(user_id: str) -> str:
+    users = load_users()
+    user = users["users"].get(user_id)
+    if not user:
+        raise KeyError("사용자를 찾지 못했습니다.")
+    settings = sanitize_notification_settings({}, user.get("notification") or {})
+    code = f"SRF-{secrets.token_hex(3).upper()}"
+    settings["telegram_link_code"] = code
+    user["notification"] = settings
+    user["updated_at"] = now_iso()
+    users["users"][user_id] = user
+    save_users(users)
+    return code
+
+
+def claim_telegram_chat(user_id: str, token: str) -> dict:
+    users = load_users()
+    user = users["users"].get(user_id)
+    if not user:
+        raise KeyError("사용자를 찾지 못했습니다.")
+    settings = sanitize_notification_settings({}, user.get("notification") or {})
+    code = str(settings.get("telegram_link_code") or "").strip()
+    if not code:
+        raise RuntimeError("먼저 연결 코드를 만들어 주세요.")
+
+    for update in reversed(telegram_updates(token)):
+        message = update.get("message") or update.get("edited_message") or {}
+        text = str(message.get("text") or "").strip()
+        chat = message.get("chat") or {}
+        if code not in text or not chat.get("id"):
+            continue
+        settings["telegram_chat_id"] = str(chat["id"])
+        settings["telegram_link_code"] = ""
+        user["notification"] = settings
+        user["updated_at"] = now_iso()
+        users["users"][user_id] = user
+        save_users(users)
+        name = " ".join(
+            str(part)
+            for part in (chat.get("first_name"), chat.get("last_name"), chat.get("username"))
+            if part
+        ).strip()
+        return {"chat_id": settings["telegram_chat_id"], "name": name, "notification": settings}
+
+    raise RuntimeError("연결 코드를 보낸 텔레그램 대화를 아직 찾지 못했습니다.")
+
+
+def notify_matching_users(new_jobs: list[dict]) -> dict:
+    config = ensure_config()
+    token = str(config.get("telegram_bot_token") or "").strip()
+    if not token or not new_jobs:
+        return {"sent": 0, "skipped": True}
+
+    users = load_users()
+    sent = 0
+    errors: list[str] = []
+    changed = False
+
+    for raw_job in new_jobs:
+        job = public_job_state(raw_job, users)
+        if job.get("hidden") or job.get("auto_hidden"):
+            continue
+        job_id = job.get("id")
+        if not job_id:
+            continue
+        for user_id, user in users.get("users", {}).items():
+            settings = sanitize_notification_settings({}, user.get("notification") or {})
+            if not settings.get("enabled") or not settings.get("telegram_chat_id"):
+                continue
+            if job_id in (settings.get("notified_jobs") or {}):
+                continue
+            if not notification_matches(job, settings.get("filters") or {}):
+                continue
+            try:
+                send_telegram_message(token, settings["telegram_chat_id"], telegram_message(job))
+            except Exception as exc:
+                errors.append(f"{user_id}:{job_id}:{exc}")
+                continue
+            settings.setdefault("notified_jobs", {})[job_id] = now_iso()
+            user["notification"] = settings
+            user["updated_at"] = now_iso()
+            sent += 1
+            changed = True
+
+    if changed:
+        save_users(users)
+    return {"sent": sent, "errors": errors, "skipped": False}
+
+
+def merge_jobs(existing: list[dict], incoming: list[dict]) -> tuple[list[dict], int, list[dict]]:
     by_key: dict[str, dict] = {}
     order: list[str] = []
 
@@ -254,6 +619,7 @@ def merge_jobs(existing: list[dict], incoming: list[dict]) -> tuple[list[dict], 
         order.append(key)
 
     added = 0
+    added_jobs: list[dict] = []
     for raw in incoming:
         job = curate_job(raw)
         key = key_for(job)
@@ -279,17 +645,19 @@ def merge_jobs(existing: list[dict], incoming: list[dict]) -> tuple[list[dict], 
             by_key[key] = job
             order.append(key)
             added += 1
+            added_jobs.append(job)
 
-    return [by_key[key] for key in order], added
+    return [by_key[key] for key in order], added, added_jobs
 
 
-def import_kofia_once(max_pages: int = 3) -> dict:
+def import_kofia_once(max_pages: int = DEFAULT_KOFIA_PAGES) -> dict:
     from collectors.kofia import collect_kofia_jobs
 
-    imported = collect_kofia_jobs(max_pages=max(1, min(max_pages, 10)))
-    jobs, added = merge_jobs(load_jobs(), imported)
+    imported = collect_kofia_jobs(max_pages=max(1, min(max_pages, 30)), fetch_details=True)
+    jobs, added, added_jobs = merge_jobs(load_jobs(), imported)
     save_jobs(jobs)
-    return {"imported": len(imported), "added": added, "jobs": jobs}
+    notification = notify_matching_users(added_jobs)
+    return {"imported": len(imported), "added": added, "jobs": jobs, "notification": notification}
 
 
 def import_saramin_once(access_key: str | None = None, count: int = 30) -> dict:
@@ -304,27 +672,29 @@ def import_saramin_once(access_key: str | None = None, count: int = 30) -> dict:
         keywords=["금융 인턴", "금융 신입", "증권 인턴", "자산운용 인턴"],
         count=max(1, min(count, 100)),
     )
-    jobs, added = merge_jobs(load_jobs(), imported)
+    jobs, added, added_jobs = merge_jobs(load_jobs(), imported)
     save_jobs(jobs)
-    return {"imported": len(imported), "added": added, "jobs": jobs, "skipped": False}
+    notification = notify_matching_users(added_jobs)
+    return {"imported": len(imported), "added": added, "jobs": jobs, "skipped": False, "notification": notification}
 
 
 def import_superookie_once(pages_per_keyword: int = 2) -> dict:
     from collectors.superookie import collect_superookie_jobs
 
     imported = collect_superookie_jobs(pages_per_keyword=max(1, min(pages_per_keyword, 5)))
-    jobs, added = merge_jobs(load_jobs(), imported)
+    jobs, added, added_jobs = merge_jobs(load_jobs(), imported)
     save_jobs(jobs)
-    return {"imported": len(imported), "added": added, "jobs": jobs}
+    notification = notify_matching_users(added_jobs)
+    return {"imported": len(imported), "added": added, "jobs": jobs, "notification": notification}
 
 
 def start_auto_import_scheduler() -> None:
     def worker() -> None:
         while True:
             try:
-                kofia = import_kofia_once(max_pages=3)
+                kofia = import_kofia_once(max_pages=DEFAULT_KOFIA_PAGES)
                 print(
-                    f"[{now_iso()}] KOFIA auto import checked {kofia['imported']} jobs, added {kofia['added']}",
+                    f"[{now_iso()}] KOFIA auto import checked {kofia['imported']} jobs, added {kofia['added']}, notified {kofia.get('notification', {}).get('sent', 0)}",
                     flush=True,
                 )
             except Exception as exc:
@@ -333,7 +703,7 @@ def start_auto_import_scheduler() -> None:
                 saramin = import_saramin_once(count=30)
                 if not saramin.get("skipped"):
                     print(
-                        f"[{now_iso()}] Saramin auto import checked {saramin['imported']} jobs, added {saramin['added']}",
+                        f"[{now_iso()}] Saramin auto import checked {saramin['imported']} jobs, added {saramin['added']}, notified {saramin.get('notification', {}).get('sent', 0)}",
                         flush=True,
                     )
             except Exception as exc:
@@ -341,7 +711,7 @@ def start_auto_import_scheduler() -> None:
             try:
                 superookie = import_superookie_once(pages_per_keyword=2)
                 print(
-                    f"[{now_iso()}] Superookie auto import checked {superookie['imported']} jobs, added {superookie['added']}",
+                    f"[{now_iso()}] Superookie auto import checked {superookie['imported']} jobs, added {superookie['added']}, notified {superookie.get('notification', {}).get('sent', 0)}",
                     flush=True,
                 )
             except Exception as exc:
@@ -413,10 +783,13 @@ class SRFHandler(SimpleHTTPRequestHandler):
                         "id": user["id"],
                         "display_name": user["display_name"],
                         "jobs": user.get("jobs", {}),
+                        "notification": sanitize_notification_settings({}, user.get("notification") or {}),
                     },
                     "config": {
                         "saramin_configured": bool(config.get("saramin_access_key")),
                         "saramin_key_masked": mask_key(config.get("saramin_access_key", "")),
+                        "telegram_configured": bool(config.get("telegram_bot_token")),
+                        "telegram_token_masked": mask_key(config.get("telegram_bot_token", "")),
                     },
                 }
             )
@@ -428,11 +801,7 @@ class SRFHandler(SimpleHTTPRequestHandler):
                 return
             query = parse_qs(parsed.query)
             include_hidden = query.get("include_hidden", ["false"])[0] == "true"
-            jobs = []
-            for job in load_jobs():
-                if job.get("hidden") and not include_hidden:
-                    continue
-                jobs.append(merge_user_state(job, user))
+            jobs = jobs_payload(load_jobs(), user, include_hidden=include_hidden)
             self._send_json({"jobs": jobs, "count": len(jobs)})
             return
 
@@ -445,30 +814,26 @@ class SRFHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/api/config":
-            payload = self._read_json()
-            config = ensure_config()
-            if "saramin_access_key" in payload:
-                config["saramin_access_key"] = str(payload.get("saramin_access_key") or "").strip()
-            if payload.get("new_password"):
-                config["password"] = hash_password(str(payload["new_password"]))
-                config["token_secret"] = secrets.token_hex(32)
-            save_config(config)
-            import_result = None
-            import_error = ""
-            if payload.get("saramin_access_key"):
-                try:
-                    import_result = import_saramin_once(access_key=config.get("saramin_access_key", ""), count=30)
-                except Exception as exc:
-                    import_error = str(exc)
             self._send_json(
-                {
-                    "saramin_configured": bool(config.get("saramin_access_key")),
-                    "saramin_key_masked": mask_key(config.get("saramin_access_key", "")),
-                    "password_changed": bool(payload.get("new_password")),
-                    "import_result": import_result,
-                    "import_error": import_error,
-                }
+                {"error": "서버 민감 설정은 웹 설정창에서 변경할 수 없습니다."},
+                HTTPStatus.FORBIDDEN,
             )
+            return
+
+        if parsed.path == "/api/me/notification":
+            users = load_users()
+            saved_user = users["users"].get(user["id"])
+            if not saved_user:
+                self._send_json({"error": "사용자를 찾지 못했습니다."}, HTTPStatus.NOT_FOUND)
+                return
+            saved_user["notification"] = sanitize_notification_settings(
+                self._read_json(),
+                saved_user.get("notification") or {},
+            )
+            saved_user["updated_at"] = now_iso()
+            users["users"][user["id"]] = saved_user
+            save_users(users)
+            self._send_json({"notification": saved_user["notification"]})
             return
 
         user_match = re.fullmatch(r"/api/user/jobs/([^/]+)", parsed.path)
@@ -478,7 +843,16 @@ class SRFHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "공고를 찾지 못했습니다."}, HTTPStatus.NOT_FOUND)
                 return
             state = update_user_job(user["id"], job_id, self._read_json())
-            self._send_json({"user_state": state})
+            jobs = load_jobs()
+            users = load_users()
+            updated_user = users["users"].get(user["id"], user)
+            updated_job = next((job for job in jobs if job.get("id") == job_id), None)
+            self._send_json(
+                {
+                    "user_state": state,
+                    "job": job_payload(updated_job, updated_user, users) if updated_job else None,
+                }
+            )
             return
 
         job_match = re.fullmatch(r"/api/jobs/([^/]+)", parsed.path)
@@ -495,7 +869,8 @@ class SRFHandler(SimpleHTTPRequestHandler):
                         job[key] = value
                 job["updated_at"] = now_iso()
                 save_jobs(jobs)
-                self._send_json({"job": merge_user_state(job, user)})
+                users = load_users()
+                self._send_json({"job": job_payload(job, user, users)})
                 return
             self._send_json({"error": "공고를 찾지 못했습니다."}, HTTPStatus.NOT_FOUND)
             return
@@ -541,21 +916,70 @@ class SRFHandler(SimpleHTTPRequestHandler):
             job.setdefault("note", "")
             job["created_at"] = now_iso()
             job["updated_at"] = now_iso()
-            jobs, added = merge_jobs(load_jobs(), [job])
+            jobs, added, _added_jobs = merge_jobs(load_jobs(), [job])
             save_jobs(jobs)
-            self._send_json({"job": merge_user_state(job, user), "added": added}, HTTPStatus.CREATED)
+            users = load_users()
+            saved_job = next((item for item in jobs if item.get("id") == job.get("id")), job)
+            self._send_json({"job": job_payload(saved_job, user, users), "added": added}, HTTPStatus.CREATED)
+            return
+
+        if parsed.path == "/api/telegram/test":
+            config = ensure_config()
+            token = str(config.get("telegram_bot_token") or "").strip()
+            settings = sanitize_notification_settings({}, user.get("notification") or {})
+            chat_id = str(settings.get("telegram_chat_id") or "").strip()
+            if not token:
+                self._send_json({"error": "텔레그램 봇 토큰을 먼저 저장해 주세요."}, HTTPStatus.BAD_REQUEST)
+                return
+            if not chat_id:
+                self._send_json({"error": "내 텔레그램 chat_id를 먼저 저장해 주세요."}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                send_telegram_message(token, chat_id, "SRF Jobs 텔레그램 알림 테스트입니다.")
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
+                return
+            self._send_json({"sent": True})
+            return
+
+        if parsed.path == "/api/telegram/link-code":
+            config = ensure_config()
+            token = str(config.get("telegram_bot_token") or "").strip()
+            if not token:
+                self._send_json({"error": "텔레그램 봇 토큰을 먼저 저장해 주세요."}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                code = create_telegram_link_code(user["id"])
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json({"code": code})
+            return
+
+        if parsed.path == "/api/telegram/claim-chat":
+            config = ensure_config()
+            token = str(config.get("telegram_bot_token") or "").strip()
+            if not token:
+                self._send_json({"error": "텔레그램 봇 토큰을 먼저 저장해 주세요."}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                result = claim_telegram_chat(user["id"], token)
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
+                return
+            self._send_json(result)
             return
 
         if parsed.path == "/api/import/kofia":
             query = parse_qs(parsed.query)
-            max_pages = int(query.get("pages", ["3"])[0])
+            max_pages = int(query.get("pages", [str(DEFAULT_KOFIA_PAGES)])[0])
             try:
                 result = import_kofia_once(max_pages=max_pages)
                 self._send_json(
                     {
                         "imported": result["imported"],
                         "added": result["added"],
-                        "jobs": [merge_user_state(job, user) for job in result["jobs"]],
+                        "jobs": jobs_payload(result["jobs"], user),
                     }
                 )
             except Exception as exc:  # pragma: no cover - surfaced in UI
@@ -576,7 +1000,7 @@ class SRFHandler(SimpleHTTPRequestHandler):
                     {
                         "imported": result["imported"],
                         "added": result["added"],
-                        "jobs": [merge_user_state(job, user) for job in result["jobs"]],
+                        "jobs": jobs_payload(result["jobs"], user),
                     }
                 )
             except Exception as exc:  # pragma: no cover - surfaced in UI
@@ -592,7 +1016,7 @@ class SRFHandler(SimpleHTTPRequestHandler):
                     {
                         "imported": result["imported"],
                         "added": result["added"],
-                        "jobs": [merge_user_state(job, user) for job in result["jobs"]],
+                        "jobs": jobs_payload(result["jobs"], user),
                     }
                 )
             except Exception as exc:  # pragma: no cover - surfaced in UI

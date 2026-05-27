@@ -11,6 +11,9 @@
   --amber: #a96300;
   --rose: #b94d5d;
   --violet: #6d5a9c;
+  --recommend: #6f4f12;
+  --recommend-soft: #fff8e8;
+  --recommend-line: #c79635;
   --shadow: 0 18px 40px rgba(30, 45, 40, 0.08);
 }
 
@@ -357,6 +360,16 @@ textarea:focus {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+.job-card.recommended {
+  border-color: var(--recommend-line);
+  background: var(--recommend-soft);
+}
+
+.job-card.recommended .job-summary,
+.job-card.recommended .job-detail {
+  background: rgba(255, 248, 232, 0.72);
+}
+
 .job-card:hover {
   border-color: #9ab8af;
   box-shadow: 0 10px 26px rgba(30, 45, 40, 0.08);
@@ -402,6 +415,7 @@ textarea:focus {
 .tag,
 .sample-pill,
 .saved-pill,
+.recommended-pill,
 .hidden-pill {
   display: inline-flex;
   align-items: center;
@@ -441,6 +455,11 @@ textarea:focus {
 .saved-pill {
   background: #f2edfb;
   color: var(--violet);
+}
+
+.recommended-pill {
+  background: #f7e5ba;
+  color: var(--recommend);
 }
 
 .hidden-pill {

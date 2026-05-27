@@ -48,7 +48,10 @@ const els = {
   settingsForm: document.querySelector("#settingsForm"),
   settingsMeta: document.querySelector("#settingsMeta"),
   copyFiltersToNotify: document.querySelector("#copyFiltersToNotify"),
-  telegramLookup: document.querySelector("#telegramLookup"),
+  telegramLinkCode: document.querySelector("#telegramLinkCode"),
+  telegramClaim: document.querySelector("#telegramClaim"),
+  telegramLinkStatus: document.querySelector("#telegramLinkStatus"),
+  notifyTagChoices: document.querySelector("#notifyTagChoices"),
   telegramTest: document.querySelector("#telegramTest"),
   searchInput: document.querySelector("#searchInput"),
   levelFilter: document.querySelector("#levelFilter"),
@@ -321,6 +324,21 @@ function renderTagFilters() {
     .join("");
 }
 
+function renderNotificationTagChoices() {
+  const tags = uniqueTags();
+  const activeTags = new Set(state.user?.notification?.filters?.tags || []);
+  if (!tags.length) {
+    els.notifyTagChoices.innerHTML = `<span class="muted-text">태그 없음</span>`;
+    return;
+  }
+  els.notifyTagChoices.innerHTML = tags
+    .map((tag) => {
+      const active = activeTags.has(tag) ? " active" : "";
+      return `<button class="tag-filter${active}" type="button" data-notify-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</button>`;
+    })
+    .join("");
+}
+
 function renderMetrics() {
   const visible = state.jobs.filter((job) => !job.hidden && !job.auto_hidden);
   const active = visible.filter((job) => (daysLeft(job) ?? 1) >= 0);
@@ -456,6 +474,7 @@ function renderList() {
 function render() {
   syncSelectOptions(els.sourceFilter, uniqueOptions("source"), "전체");
   renderTagFilters();
+  renderNotificationTagChoices();
   renderMetrics();
   renderList();
 }
@@ -519,9 +538,9 @@ async function addJob(form) {
 function updateSettingsMeta() {
   const saramin = state.config.saramin_configured
     ? `공유 사람인 키 저장됨: ${state.config.saramin_key_masked}. 서버가 1시간마다 자동 수집합니다.`
-    : "공유 사람인 키 미설정. KOFIA는 서버가 1시간마다 자동 수집합니다.";
+    : "사람인 키 미설정. KOFIA와 슈퍼루키는 서버가 1시간마다 자동 수집합니다.";
   const telegram = state.config.telegram_configured
-    ? `텔레그램 봇 연결됨: ${state.config.telegram_token_masked}.`
+    ? "텔레그램 봇 설정됨."
     : "텔레그램 봇 토큰 미설정.";
   els.settingsMeta.textContent = `${saramin} ${telegram}`;
 }
@@ -530,34 +549,44 @@ function populateNotificationForm() {
   const notification = state.user?.notification || {};
   const filters = notification.filters || {};
   els.settingsForm.elements.notify_enabled.checked = Boolean(notification.enabled);
-  els.settingsForm.elements.telegram_chat_id.value = notification.telegram_chat_id || "";
-  els.settingsForm.elements.notify_q.value = filters.q || "";
-  els.settingsForm.elements.notify_levels.value = joinList(filters.levels);
-  els.settingsForm.elements.notify_sources.value = joinList(filters.sources);
-  els.settingsForm.elements.notify_tags.value = joinList(filters.tags);
-  els.settingsForm.elements.notify_deadline_days.value = filters.deadline_days || "";
+  const linked = Boolean(notification.telegram_chat_id);
+  const code = notification.telegram_link_code;
+  els.telegramLinkStatus.textContent = linked
+    ? "이 계정의 텔레그램이 연결되어 있습니다."
+    : code
+    ? `텔레그램 봇에게 ${code} 를 보낸 뒤 연결 확인을 누르세요.`
+    : "연결 코드 만들기를 누르고, 나온 코드를 텔레그램 봇에게 보내세요.";
+  renderNotificationTagChoices();
 }
 
 function copyCurrentFiltersToNotificationForm() {
-  els.settingsForm.elements.notify_q.value = state.filters.q || "";
-  els.settingsForm.elements.notify_levels.value = state.filters.level === "all" ? "" : state.filters.level;
-  els.settingsForm.elements.notify_sources.value = state.filters.source === "all" ? "" : state.filters.source;
-  els.settingsForm.elements.notify_tags.value = [...state.filters.tags].join(", ");
-  els.settingsForm.elements.notify_deadline_days.value = state.filters.deadlineOnly ? "7" : "";
+  const notification = state.user?.notification || {};
+  notification.filters = {
+    ...(notification.filters || {}),
+    tags: [...state.filters.tags],
+    q: "",
+    levels: [],
+    sources: [],
+    deadline_days: 0,
+    featured_only: false,
+  };
+  state.user.notification = notification;
   els.settingsForm.elements.notify_enabled.checked = true;
+  renderNotificationTagChoices();
 }
 
 async function saveNotificationSettings(form) {
   const formData = new FormData(form);
+  const notification = state.user?.notification || {};
+  const filters = notification.filters || {};
   const payload = {
     enabled: formData.get("notify_enabled") === "on",
-    telegram_chat_id: String(formData.get("telegram_chat_id") || "").trim(),
     filters: {
-      q: String(formData.get("notify_q") || "").trim(),
-      levels: parseList(formData.get("notify_levels")),
-      sources: parseList(formData.get("notify_sources")),
-      tags: parseList(formData.get("notify_tags")),
-      deadline_days: Number(formData.get("notify_deadline_days") || 0),
+      q: "",
+      levels: [],
+      sources: [],
+      tags: filters.tags || [],
+      deadline_days: 0,
       featured_only: false,
     },
   };
@@ -570,80 +599,34 @@ async function saveNotificationSettings(form) {
 }
 
 async function saveSettings(form) {
-  const formData = new FormData(form);
-  const payload = {};
-  const saraminKey = String(formData.get("saramin_access_key") || "").trim();
-  const telegramToken = String(formData.get("telegram_bot_token") || "").trim();
-  const newPassword = String(formData.get("new_password") || "").trim();
-  if (saraminKey) payload.saramin_access_key = saraminKey;
-  if (telegramToken) payload.telegram_bot_token = telegramToken;
-  if (newPassword) payload.new_password = newPassword;
-  let data = {};
   await saveNotificationSettings(form);
-  if (Object.keys(payload).length) {
-    data = await apiFetch("/api/config", {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    });
-    state.config = {
-      saramin_configured: data.saramin_configured,
-      saramin_key_masked: data.saramin_key_masked,
-      telegram_configured: data.telegram_configured,
-      telegram_token_masked: data.telegram_token_masked,
-    };
-    if (data.import_result && !data.import_result.skipped) {
-      state.jobs = data.import_result.jobs || state.jobs;
-      render();
-    }
-  }
   updateSettingsMeta();
-  if (data.password_changed) {
-    logout(false);
-    showToast("비밀번호가 변경되었습니다. 다시 로그인해 주세요.");
-  } else if (data.import_error) {
-    showToast(`설정은 저장했지만 사람인 수집은 실패했습니다: ${data.import_error}`);
-  } else {
-    showToast("설정을 저장했습니다.");
-  }
+  showToast("설정을 저장했습니다.");
 }
 
 async function sendTelegramTest() {
-  const telegramToken = String(new FormData(els.settingsForm).get("telegram_bot_token") || "").trim();
-  if (telegramToken) {
-    const data = await apiFetch("/api/config", {
-      method: "PATCH",
-      body: JSON.stringify({ telegram_bot_token: telegramToken }),
-    });
-    state.config = {
-      saramin_configured: data.saramin_configured,
-      saramin_key_masked: data.saramin_key_masked,
-      telegram_configured: data.telegram_configured,
-      telegram_token_masked: data.telegram_token_masked,
-    };
-  }
   await saveNotificationSettings(els.settingsForm);
   await apiFetch("/api/telegram/test", { method: "POST" });
   showToast("텔레그램 테스트 메시지를 보냈습니다.");
 }
 
-async function lookupTelegramChatId() {
-  const telegramToken = String(new FormData(els.settingsForm).get("telegram_bot_token") || "").trim();
-  if (telegramToken) {
-    const data = await apiFetch("/api/config", {
-      method: "PATCH",
-      body: JSON.stringify({ telegram_bot_token: telegramToken }),
-    });
-    state.config = {
-      saramin_configured: data.saramin_configured,
-      saramin_key_masked: data.saramin_key_masked,
-      telegram_configured: data.telegram_configured,
-      telegram_token_masked: data.telegram_token_masked,
-    };
-    updateSettingsMeta();
-  }
-  const chat = await apiFetch("/api/telegram/latest-chat", { method: "POST" });
-  els.settingsForm.elements.telegram_chat_id.value = chat.chat_id || "";
-  showToast(chat.name ? `${chat.name} chat_id를 가져왔습니다.` : "chat_id를 가져왔습니다.");
+async function createTelegramLinkCode() {
+  const data = await apiFetch("/api/telegram/link-code", { method: "POST" });
+  state.user.notification = {
+    ...(state.user.notification || {}),
+    telegram_link_code: data.code,
+  };
+  localStorage.setItem(USER_KEY, JSON.stringify(state.user));
+  populateNotificationForm();
+  showToast("텔레그램 연결 코드를 만들었습니다.");
+}
+
+async function claimTelegramChat() {
+  const data = await apiFetch("/api/telegram/claim-chat", { method: "POST" });
+  state.user.notification = data.notification;
+  localStorage.setItem(USER_KEY, JSON.stringify(state.user));
+  populateNotificationForm();
+  showToast(data.name ? `${data.name} 텔레그램을 연결했습니다.` : "텔레그램을 연결했습니다.");
 }
 
 function bindEvents() {
@@ -677,9 +660,17 @@ function bindEvents() {
     showToast("현재 필터를 알림 필터로 복사했습니다.");
   });
 
-  els.telegramLookup.addEventListener("click", async () => {
+  els.telegramLinkCode.addEventListener("click", async () => {
     try {
-      await lookupTelegramChatId();
+      await createTelegramLinkCode();
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
+  els.telegramClaim.addEventListener("click", async () => {
+    try {
+      await claimTelegramChat();
     } catch (error) {
       showToast(error.message);
     }
@@ -743,6 +734,25 @@ function bindEvents() {
     if (state.filters.tags.has(tag)) state.filters.tags.delete(tag);
     else state.filters.tags.add(tag);
     render();
+  });
+  els.notifyTagChoices.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-notify-tag]");
+    if (!button) return;
+    const tag = button.dataset.notifyTag;
+    const notification = state.user?.notification || {};
+    const filters = notification.filters || {};
+    const tags = new Set(filters.tags || []);
+    if (tags.has(tag)) tags.delete(tag);
+    else tags.add(tag);
+    state.user.notification = {
+      ...notification,
+      filters: {
+        ...filters,
+        tags: [...tags],
+      },
+    };
+    localStorage.setItem(USER_KEY, JSON.stringify(state.user));
+    renderNotificationTagChoices();
   });
   els.refreshJobs.addEventListener("click", async () => {
     try {

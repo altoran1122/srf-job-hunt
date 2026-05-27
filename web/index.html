@@ -205,51 +205,24 @@
           <button class="icon-button" type="button" title="닫기" aria-label="닫기" data-close-dialog="settingsDialog">×</button>
         </div>
         <div class="form-grid">
-          <label class="field span-2">
-            <span>공유 사람인 access-key</span>
-            <input name="saramin_access_key" autocomplete="off" placeholder="운영자가 한 번만 저장하면 1시간마다 자동 수집됩니다" />
-          </label>
-          <label class="field span-2">
-            <span>텔레그램 봇 토큰</span>
-            <input name="telegram_bot_token" autocomplete="off" placeholder="운영자가 한 번만 저장합니다" />
-          </label>
-          <label class="field span-2">
-            <span>새 공유 비밀번호</span>
-            <input name="new_password" type="password" autocomplete="new-password" placeholder="변경하지 않으려면 비워두세요" />
-          </label>
           <label class="toggle-row span-2">
             <input name="notify_enabled" type="checkbox" />
             <span>텔레그램 알림 켜기</span>
           </label>
-          <label class="field">
-            <span>내 텔레그램 chat_id</span>
-            <input name="telegram_chat_id" autocomplete="off" placeholder="예: 123456789" />
-          </label>
-          <label class="field">
-            <span>알림 검색어</span>
-            <input name="notify_q" autocomplete="off" placeholder="예: IB, 자산운용" />
-          </label>
-          <label class="field">
-            <span>알림 구분</span>
-            <input name="notify_levels" autocomplete="off" placeholder="intern, entry" />
-          </label>
-          <label class="field">
-            <span>알림 출처</span>
-            <input name="notify_sources" autocomplete="off" placeholder="KOFIA, Superookie" />
-          </label>
-          <label class="field">
-            <span>알림 태그</span>
-            <input name="notify_tags" autocomplete="off" placeholder="IB, 리서치" />
-          </label>
-          <label class="field">
-            <span>마감 N일 이내</span>
-            <input name="notify_deadline_days" type="number" min="0" max="90" step="1" placeholder="0" />
-          </label>
+          <div class="span-2 notify-connect">
+            <span class="section-label">텔레그램 연결</span>
+            <p id="telegramLinkStatus" class="settings-meta"></p>
+          </div>
+          <div class="span-2 tag-section">
+            <div class="section-label">알림 태그</div>
+            <div id="notifyTagChoices" class="tag-filter-list"></div>
+          </div>
         </div>
         <p id="settingsMeta" class="settings-meta"></p>
         <div class="dialog-actions">
           <button class="button ghost" id="copyFiltersToNotify" type="button">현재 필터 복사</button>
-          <button class="button ghost" id="telegramLookup" type="button">chat_id 가져오기</button>
+          <button class="button ghost" id="telegramLinkCode" type="button">연결 코드 만들기</button>
+          <button class="button ghost" id="telegramClaim" type="button">연결 확인</button>
           <button class="button ghost" id="telegramTest" type="button">테스트 발송</button>
           <button class="button ghost" type="button" data-close-dialog="settingsDialog">취소</button>
           <button class="button primary" id="saveSettings" value="default" type="submit">저장</button>

@@ -87,6 +87,16 @@ def check_password(password: str, password_config: dict) -> bool:
 def ensure_config() -> dict:
     config = load_json(CONFIG_FILE, None)
     if config:
+        changed = False
+        for key, value in {
+            "saramin_access_key": os.environ.get("SARAMIN_ACCESS_KEY", config.get("saramin_access_key", "")),
+            "telegram_bot_token": os.environ.get("TELEGRAM_BOT_TOKEN", config.get("telegram_bot_token", "")),
+        }.items():
+            if config.get(key) != value:
+                config[key] = value
+                changed = True
+        if changed:
+            save_config(config)
         return config
     initial_password = os.environ.get("SRF_PASSWORD", DEFAULT_PASSWORD)
     config = {
@@ -211,6 +221,7 @@ def default_notification_settings() -> dict:
     return {
         "enabled": False,
         "telegram_chat_id": "",
+        "telegram_link_code": "",
         "filters": {
             "q": "",
             "levels": [],
@@ -239,8 +250,6 @@ def sanitize_notification_settings(payload: dict, current: dict | None = None) -
 
     if "enabled" in payload:
         settings["enabled"] = bool(payload.get("enabled"))
-    if "telegram_chat_id" in payload:
-        settings["telegram_chat_id"] = str(payload.get("telegram_chat_id") or "").strip()
     if "filters" in payload:
         incoming = payload.get("filters") or {}
         filters["q"] = str(incoming.get("q") or "").strip()
@@ -255,6 +264,7 @@ def sanitize_notification_settings(payload: dict, current: dict | None = None) -
 
     notified_jobs = settings.get("notified_jobs")
     settings["notified_jobs"] = notified_jobs if isinstance(notified_jobs, dict) else {}
+    settings["telegram_link_code"] = str(settings.get("telegram_link_code") or "")
     settings["filters"] = filters
     return settings
 
@@ -419,7 +429,7 @@ def notification_matches(job: dict, filters: dict) -> bool:
     if sources and str(job.get("source") or "") not in sources:
         return False
     tags = listify(filters.get("tags"))
-    if tags and not all(tag in (job.get("tags") or []) for tag in tags):
+    if tags and not any(tag in (job.get("tags") or []) for tag in tags):
         return False
     deadline_days = int(filters.get("deadline_days") or 0)
     if deadline_days:
@@ -487,6 +497,62 @@ def latest_telegram_chat(token: str) -> dict:
             ).strip()
             return {"chat_id": str(chat["id"]), "name": name, "type": chat.get("type", "")}
     raise RuntimeError("최근 텔레그램 대화를 찾지 못했습니다. 봇에게 /start를 먼저 보내 주세요.")
+
+
+def telegram_updates(token: str) -> list[dict]:
+    request = Request(f"https://api.telegram.org/bot{token}/getUpdates", method="GET")
+    with urlopen(request, timeout=15) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    if not body.get("ok"):
+        raise RuntimeError(body.get("description") or "Telegram getUpdates failed")
+    return body.get("result") or []
+
+
+def create_telegram_link_code(user_id: str) -> str:
+    users = load_users()
+    user = users["users"].get(user_id)
+    if not user:
+        raise KeyError("사용자를 찾지 못했습니다.")
+    settings = sanitize_notification_settings({}, user.get("notification") or {})
+    code = f"SRF-{secrets.token_hex(3).upper()}"
+    settings["telegram_link_code"] = code
+    user["notification"] = settings
+    user["updated_at"] = now_iso()
+    users["users"][user_id] = user
+    save_users(users)
+    return code
+
+
+def claim_telegram_chat(user_id: str, token: str) -> dict:
+    users = load_users()
+    user = users["users"].get(user_id)
+    if not user:
+        raise KeyError("사용자를 찾지 못했습니다.")
+    settings = sanitize_notification_settings({}, user.get("notification") or {})
+    code = str(settings.get("telegram_link_code") or "").strip()
+    if not code:
+        raise RuntimeError("먼저 연결 코드를 만들어 주세요.")
+
+    for update in reversed(telegram_updates(token)):
+        message = update.get("message") or update.get("edited_message") or {}
+        text = str(message.get("text") or "").strip()
+        chat = message.get("chat") or {}
+        if code not in text or not chat.get("id"):
+            continue
+        settings["telegram_chat_id"] = str(chat["id"])
+        settings["telegram_link_code"] = ""
+        user["notification"] = settings
+        user["updated_at"] = now_iso()
+        users["users"][user_id] = user
+        save_users(users)
+        name = " ".join(
+            str(part)
+            for part in (chat.get("first_name"), chat.get("last_name"), chat.get("username"))
+            if part
+        ).strip()
+        return {"chat_id": settings["telegram_chat_id"], "name": name, "notification": settings}
+
+    raise RuntimeError("연결 코드를 보낸 텔레그램 대화를 아직 찾지 못했습니다.")
 
 
 def notify_matching_users(new_jobs: list[dict]) -> dict:
@@ -748,37 +814,9 @@ class SRFHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/api/config":
-            payload = self._read_json()
-            config = ensure_config()
-            if "saramin_access_key" in payload:
-                config["saramin_access_key"] = str(payload.get("saramin_access_key") or "").strip()
-            if "telegram_bot_token" in payload:
-                config["telegram_bot_token"] = str(payload.get("telegram_bot_token") or "").strip()
-            if payload.get("new_password"):
-                config["password"] = hash_password(str(payload["new_password"]))
-                config["token_secret"] = secrets.token_hex(32)
-            save_config(config)
-            import_result = None
-            import_error = ""
-            if payload.get("saramin_access_key"):
-                try:
-                    import_result = import_saramin_once(access_key=config.get("saramin_access_key", ""), count=30)
-                    import_result = {
-                        **import_result,
-                        "jobs": jobs_payload(import_result.get("jobs", []), user),
-                    }
-                except Exception as exc:
-                    import_error = str(exc)
             self._send_json(
-                {
-                    "saramin_configured": bool(config.get("saramin_access_key")),
-                    "saramin_key_masked": mask_key(config.get("saramin_access_key", "")),
-                    "telegram_configured": bool(config.get("telegram_bot_token")),
-                    "telegram_token_masked": mask_key(config.get("telegram_bot_token", "")),
-                    "password_changed": bool(payload.get("new_password")),
-                    "import_result": import_result,
-                    "import_error": import_error,
-                }
+                {"error": "서버 민감 설정은 웹 설정창에서 변경할 수 없습니다."},
+                HTTPStatus.FORBIDDEN,
             )
             return
 
@@ -904,16 +942,32 @@ class SRFHandler(SimpleHTTPRequestHandler):
             self._send_json({"sent": True})
             return
 
-        if parsed.path == "/api/telegram/latest-chat":
+        if parsed.path == "/api/telegram/link-code":
             config = ensure_config()
             token = str(config.get("telegram_bot_token") or "").strip()
             if not token:
                 self._send_json({"error": "텔레그램 봇 토큰을 먼저 저장해 주세요."}, HTTPStatus.BAD_REQUEST)
                 return
             try:
-                self._send_json(latest_telegram_chat(token))
+                code = create_telegram_link_code(user["id"])
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json({"code": code})
+            return
+
+        if parsed.path == "/api/telegram/claim-chat":
+            config = ensure_config()
+            token = str(config.get("telegram_bot_token") or "").strip()
+            if not token:
+                self._send_json({"error": "텔레그램 봇 토큰을 먼저 저장해 주세요."}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                result = claim_telegram_chat(user["id"], token)
             except Exception as exc:
                 self._send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
+                return
+            self._send_json(result)
             return
 
         if parsed.path == "/api/import/kofia":
