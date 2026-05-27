@@ -429,6 +429,8 @@ def notification_matches(job: dict, filters: dict) -> bool:
     if sources and str(job.get("source") or "") not in sources:
         return False
     tags = listify(filters.get("tags"))
+    if not tags:
+        return False
     if tags and not any(tag in (job.get("tags") or []) for tag in tags):
         return False
     deadline_days = int(filters.get("deadline_days") or 0)
@@ -595,6 +597,76 @@ def notify_matching_users(new_jobs: list[dict]) -> dict:
     if changed:
         save_users(users)
     return {"sent": sent, "errors": errors, "skipped": False}
+
+
+def notify_user_for_existing_matches(user_id: str) -> dict:
+    result = {
+        "sent": 0,
+        "matched": 0,
+        "already_notified": 0,
+        "attempted": 0,
+        "errors": [],
+        "skipped": False,
+        "reason": "",
+    }
+    config = ensure_config()
+    token = str(config.get("telegram_bot_token") or "").strip()
+    if not token:
+        result.update({"skipped": True, "reason": "no_token"})
+        return result
+
+    users = load_users()
+    user = users.get("users", {}).get(user_id)
+    if not user:
+        result.update({"skipped": True, "reason": "no_user"})
+        return result
+
+    settings = sanitize_notification_settings({}, user.get("notification") or {})
+    if not settings.get("enabled"):
+        result.update({"skipped": True, "reason": "disabled"})
+        return result
+    if not settings.get("telegram_chat_id"):
+        result.update({"skipped": True, "reason": "no_chat"})
+        return result
+    if not listify((settings.get("filters") or {}).get("tags")):
+        result.update({"skipped": True, "reason": "no_tags"})
+        return result
+
+    for raw_job in load_jobs():
+        job = public_job_state(raw_job, users)
+        job_id = job.get("id")
+        if not job_id or job.get("hidden") or job.get("auto_hidden"):
+            continue
+        if not notification_matches(job, settings.get("filters") or {}):
+            continue
+        result["matched"] += 1
+        if job_id in (settings.get("notified_jobs") or {}):
+            result["already_notified"] += 1
+            continue
+        result["attempted"] += 1
+        try:
+            send_telegram_message(token, settings["telegram_chat_id"], telegram_message(job))
+        except Exception as exc:
+            result["errors"].append(f"{job_id}:{exc}")
+            continue
+        settings.setdefault("notified_jobs", {})[job_id] = now_iso()
+        result["sent"] += 1
+
+    if result["sent"]:
+        user["notification"] = settings
+        user["updated_at"] = now_iso()
+        users["users"][user_id] = user
+        save_users(users)
+
+    if result["errors"]:
+        result["reason"] = "partial_send_failed" if result["sent"] else "send_failed"
+    elif result["matched"] == 0:
+        result["reason"] = "no_matches"
+    elif result["sent"] == 0 and result["already_notified"] >= result["matched"]:
+        result["reason"] = "all_already_notified"
+    elif result["sent"] == 0:
+        result["reason"] = "no_new_matches"
+    return result
 
 
 def merge_jobs(existing: list[dict], incoming: list[dict]) -> tuple[list[dict], int, list[dict]]:
@@ -833,7 +905,9 @@ class SRFHandler(SimpleHTTPRequestHandler):
             saved_user["updated_at"] = now_iso()
             users["users"][user["id"]] = saved_user
             save_users(users)
-            self._send_json({"notification": saved_user["notification"]})
+            notify_result = notify_user_for_existing_matches(user["id"])
+            refreshed = load_users()["users"].get(user["id"], saved_user)
+            self._send_json({"notification": refreshed["notification"], "notification_result": notify_result})
             return
 
         user_match = re.fullmatch(r"/api/user/jobs/([^/]+)", parsed.path)
@@ -967,6 +1041,10 @@ class SRFHandler(SimpleHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
                 return
+            result["notification_result"] = notify_user_for_existing_matches(user["id"])
+            refreshed = load_users()["users"].get(user["id"])
+            if refreshed:
+                result["notification"] = refreshed.get("notification", result.get("notification"))
             self._send_json(result)
             return
 

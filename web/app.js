@@ -380,7 +380,6 @@ function renderDetail(job) {
   const summary = job.summary || {};
   const personal = userState(job);
   const sourceUrl = job.source_url || job.apply_url || "";
-  const applyUrl = job.apply_url || job.source_url || "";
   return `
     <div class="job-detail">
       <div class="detail-actions">
@@ -414,7 +413,6 @@ function renderDetail(job) {
       <div class="detail-bottom">
         <button class="button" type="button" data-save-comment="${escapeHtml(job.id)}">코멘트 저장</button>
         <div class="link-row">
-          ${linkButton(applyUrl, "지원 링크")}
           ${linkButton(sourceUrl, "원문 보기")}
         </div>
       </div>
@@ -427,6 +425,9 @@ function renderJobCard(job) {
   const personal = userState(job);
   const sample = job.is_sample ? `<span class="sample-pill">샘플</span>` : "";
   const saved = personal.saved ? `<span class="saved-pill">내 관심</span>` : "";
+  const commentPreview = personal.comment
+    ? `<p class="comment-preview">${escapeHtml(personal.comment)}</p>`
+    : "";
   const recommended = job.featured
     ? `<span class="recommended-pill">추천 ${Number(job.reaction_count || 0)}명</span>`
     : "";
@@ -455,6 +456,7 @@ function renderJobCard(job) {
             .map((tag) => `<span class="tag" data-inline-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</span>`)
             .join("")}
         </div>
+        ${commentPreview}
       </button>
       ${selected ? renderDetail(job) : ""}
     </article>
@@ -596,12 +598,46 @@ async function saveNotificationSettings(form) {
   });
   state.user.notification = data.notification;
   localStorage.setItem(USER_KEY, JSON.stringify(state.user));
+  return data.notification_result || { sent: 0 };
+}
+
+function notificationResultText(result, baseMessage) {
+  const sent = Number(result?.sent || 0);
+  const matched = Number(result?.matched || 0);
+  const alreadyNotified = Number(result?.already_notified || 0);
+  const errors = result?.errors || [];
+  if (sent > 0 && errors.length) {
+    return `${baseMessage}. 기존 공고 ${sent}개를 보냈고, ${errors.length}개는 실패했습니다.`;
+  }
+  if (sent > 0) {
+    return `${baseMessage}. 기존 공고 ${sent}개를 텔레그램으로 보냈습니다.`;
+  }
+  if (result?.reason === "no_chat") {
+    return `${baseMessage}. 텔레그램 연결 확인을 먼저 완료해야 발송됩니다.`;
+  }
+  if (result?.reason === "no_token") {
+    return `${baseMessage}. 서버에 텔레그램 봇 토큰이 없어 발송하지 못했습니다.`;
+  }
+  if (result?.reason === "no_tags") {
+    return `${baseMessage}. 알림 태그를 1개 이상 선택해야 발송됩니다.`;
+  }
+  if (result?.reason === "send_failed") {
+    return `${baseMessage}. 텔레그램 발송이 실패했습니다: ${errors[0] || "원인 확인 필요"}`;
+  }
+  if (matched > 0 && alreadyNotified >= matched) {
+    return `${baseMessage}. 매칭 공고 ${matched}개는 이미 알림 보낸 공고입니다.`;
+  }
+  if (matched === 0) {
+    return `${baseMessage}. 현재 선택한 태그와 맞는 기존 공고는 없습니다.`;
+  }
+  return baseMessage;
 }
 
 async function saveSettings(form) {
-  await saveNotificationSettings(form);
+  const result = await saveNotificationSettings(form);
   updateSettingsMeta();
-  showToast("설정을 저장했습니다.");
+  showToast(notificationResultText(result, "설정을 저장했습니다"));
+  return result;
 }
 
 async function sendTelegramTest() {
@@ -626,7 +662,8 @@ async function claimTelegramChat() {
   state.user.notification = data.notification;
   localStorage.setItem(USER_KEY, JSON.stringify(state.user));
   populateNotificationForm();
-  showToast(data.name ? `${data.name} 텔레그램을 연결했습니다.` : "텔레그램을 연결했습니다.");
+  const base = data.name ? `${data.name} 텔레그램을 연결했습니다.` : "텔레그램을 연결했습니다.";
+  showToast(notificationResultText(data.notification_result || {}, base));
 }
 
 function bindEvents() {
@@ -688,8 +725,9 @@ function bindEvents() {
     if (event.submitter?.value === "cancel") return;
     event.preventDefault();
     try {
-      await saveSettings(els.settingsForm);
-      if (state.token) els.settingsDialog.close();
+      const result = await saveSettings(els.settingsForm);
+      const keepOpenReasons = new Set(["no_chat", "no_token", "no_tags", "send_failed"]);
+      if (state.token && !keepOpenReasons.has(result.reason)) els.settingsDialog.close();
     } catch (error) {
       showToast(error.message);
     }

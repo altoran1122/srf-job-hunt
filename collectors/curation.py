@@ -70,6 +70,7 @@ TAG_PATTERNS = {
     ),
     "자산운용": (r"자산운용", r"운용역", r"펀드", r"\bportfolio management\b", r"\basset management\b"),
     "리서치": (r"리서치", r"\bresearch\b", r"\bRA\b", r"애널리스트", r"산업\s*분석", r"기업\s*분석"),
+    "증권": (r"증권", r"\bsecurities\b", r"\bsecurities research\b", r"\bbrokerage\b"),
     "퀀트": (r"퀀트", r"\bquant\b", r"파생", r"\bderivative", r"알고리즘"),
     "리스크": (r"리스크", r"\brisk\b", r"심사", r"\bcredit\b", r"신용"),
     "WM": (
@@ -81,7 +82,7 @@ TAG_PATTERNS = {
         r"자산관리\s*(?:영업|컨설팅|PB|WM)?",
     ),
     "핀테크": (r"핀테크", r"\bfintech\b", r"\bpayment", r"페이먼트"),
-    "외국계": (r"외국계", r"\bglobal\b", r"\bkorea branch\b", r"\benglish\b", r"영문", r"영어"),
+    "외국계": (r"외국계", r"\bforeign[-\s]?owned\b", r"\bmultinational\b", r"\bkorea branch\b", r"한국\s*지사"),
     "백오피스": (r"결제", r"\bsettlement\b", r"운용지원", r"컴플라이언스", r"준법", r"오퍼레이션"),
 }
 
@@ -194,14 +195,30 @@ def is_non_finance_role(*parts: str | None) -> bool:
 
 
 def is_entry_or_intern(*parts: str | None) -> bool:
-    text = " ".join(normalize_text(part).lower() for part in parts if part)
-    if any(keyword in text for keyword in NON_TARGET_LEVEL_KEYWORDS):
-        return False
-    if any(keyword in text for keyword in INTERN_KEYWORDS):
-        return True
-    if any(keyword in text for keyword in ENTRY_KEYWORDS):
-        return True
-    return False
+    return detect_level(*parts) in {"intern", "entry"}
+
+
+def has_keyword(text: str, keywords: tuple[str, ...]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
+def detect_level(*parts: str | None) -> str:
+    normalized_parts = [normalize_text(part).lower() for part in parts if part]
+    title_text = normalized_parts[0] if normalized_parts else ""
+    text = " ".join(normalized_parts)
+    if has_keyword(text, NON_TARGET_LEVEL_KEYWORDS):
+        return "unknown"
+    if has_keyword(title_text, INTERN_KEYWORDS):
+        return "intern"
+    if has_keyword(title_text, ENTRY_KEYWORDS):
+        return "entry"
+    if "채용전환" in text and has_keyword(text, INTERN_KEYWORDS):
+        return "intern"
+    if has_keyword(text, ENTRY_KEYWORDS):
+        return "entry"
+    if has_keyword(text, INTERN_KEYWORDS) and not re.search(r"(인턴\s*등|인턴\s*경험|경험\s*\(?\s*인턴|인턴십\s*경험)", text):
+        return "intern"
+    return "unknown"
 
 
 def looks_senior(*parts: str | None) -> bool:
@@ -209,23 +226,12 @@ def looks_senior(*parts: str | None) -> bool:
     return any(keyword in text for keyword in EXCLUDE_KEYWORDS)
 
 
-def detect_level(*parts: str | None) -> str:
-    text = " ".join(normalize_text(part).lower() for part in parts if part)
-    if any(keyword in text for keyword in NON_TARGET_LEVEL_KEYWORDS):
-        return "unknown"
-    if any(keyword in text for keyword in INTERN_KEYWORDS):
-        return "intern"
-    if any(keyword in text for keyword in ENTRY_KEYWORDS):
-        return "entry"
-    return "unknown"
-
-
 def detect_employment_type(level: str, *parts: str | None) -> str:
     text = " ".join(normalize_text(part) for part in parts if part)
-    lowered = text.lower()
-    if "채용전환" in text:
+    title_text = normalize_text(parts[0]).lower() if parts else ""
+    if level == "intern" and "채용전환" in text:
         return "채용전환형 인턴"
-    if any(keyword in lowered for keyword in INTERN_KEYWORDS):
+    if level == "intern" or has_keyword(title_text, INTERN_KEYWORDS):
         return "인턴"
     if level == "entry":
         return "신입"
@@ -234,11 +240,13 @@ def detect_employment_type(level: str, *parts: str | None) -> str:
 
 def detect_tags(*parts: str | None) -> list[str]:
     text = " ".join(normalize_text(part) for part in parts if part)
+    title_company_text = " ".join(normalize_text(part) for part in parts[:2] if part)
     tags: list[str] = []
     for tag, patterns in TAG_PATTERNS.items():
-        if has_any_pattern(text, patterns):
+        target_text = title_company_text if tag == "증권" else text
+        if has_any_pattern(target_text, patterns):
             tags.append(tag)
-    level = detect_level(text)
+    level = detect_level(*parts)
     if level == "intern":
         tags.append("인턴")
     elif level == "entry":
