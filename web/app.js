@@ -449,14 +449,14 @@ function renderDetail(job) {
         </section>
       </div>
 
-      <label class="field note-field">
-        <span>내 코멘트</span>
-        <textarea data-comment-input="${escapeHtml(job.id)}" placeholder="예: 영문 CV 필요, 마감 전 리마인드">${escapeHtml(personal.comment || "")}</textarea>
-      </label>
       <section class="comments-panel">
         <span class="summary-label">코멘트</span>
         ${renderCommentList(job)}
       </section>
+      <label class="field note-field">
+        <span>코멘트 달기</span>
+        <textarea data-comment-input="${escapeHtml(job.id)}" placeholder="예: 영문 CV 필요, 마감 전 리마인드">${escapeHtml(personal.comment || "")}</textarea>
+      </label>
       <div class="detail-bottom">
         <button class="button" type="button" data-save-comment="${escapeHtml(job.id)}">코멘트 저장</button>
         <div class="link-row">
